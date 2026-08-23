@@ -16,8 +16,20 @@ import {
   Sliders,
   Loader2
 } from 'lucide-react';
-import { ADMIN_EMAIL, GOOGLE_CLIENT_ID } from './firebase';
+import { 
+  auth, 
+  googleProvider, 
+  db, 
+  ADMIN_EMAIL, 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  doc, 
+  setDoc, 
+  onSnapshot 
+} from './firebase';
 import { BioProfile, ToastMessage } from './types';
+import { sanitizeProfilePayload } from './security';
 import { StatsSection } from './components/StatsSection';
 import { PromoSection } from './components/PromoSection';
 import { NewsSection } from './components/NewsSection';
@@ -156,37 +168,42 @@ export default function App() {
     setImageError(false);
   }, []);
 
-  // Check saved session on mount
+  // Firebase Auth State Listener
   useEffect(() => {
-    const checkSavedSession = async () => {
-      try {
-        const savedToken = localStorage.getItem('nexus_admin_session');
-        if (savedToken) {
-          const res = await fetch('/api/auth/session', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: savedToken })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (data.isAdmin) {
-              setIsAdmin(true);
-            } else {
-              localStorage.removeItem('nexus_admin_session');
-            }
-          }
-        }
-      } catch (e) {
-        console.warn('Session check notice:', e);
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (user && user.email && user.email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim()) {
+        setIsAdmin(true);
+      } else {
+        setIsAdmin(false);
       }
-    };
+    });
 
-    checkSavedSession();
+    return () => unsubscribeAuth();
   }, []);
 
-  // Real-time Database Synchronization (Fetch + SSE Event Stream)
+  // Real-time Database Synchronization (Firebase Firestore + Server Backup Sync)
   useEffect(() => {
-    const fetchLatestProfile = async () => {
+    let unsubscribeFirestore: (() => void) | null = null;
+
+    try {
+      const docRef = doc(db, 'nexus_profile', 'main');
+      unsubscribeFirestore = onSnapshot(docRef, (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          if (data) {
+            updateProfileState(data as BioProfile);
+            setIsLiveConnected(true);
+          }
+        }
+      }, (err) => {
+        console.warn('Firestore snapshot notice, connecting backup:', err);
+      });
+    } catch (e) {
+      console.warn('Firestore listener setup notice:', e);
+    }
+
+    // Server API Sync as secondary real-time fallback
+    const fetchServerProfile = async () => {
       try {
         const res = await fetch('/api/profile');
         if (res.ok) {
@@ -197,19 +214,16 @@ export default function App() {
           }
         }
       } catch (err) {
-        console.warn('Profile fetch notice:', err);
+        console.warn('Server profile fetch notice:', err);
       }
     };
 
-    fetchLatestProfile();
+    fetchServerProfile();
 
-    // SSE Connection for real-time live database updates across all devices
     let eventSource: EventSource | null = null;
     try {
       eventSource = new EventSource('/api/profile/events');
-      eventSource.onopen = () => {
-        setIsLiveConnected(true);
-      };
+      eventSource.onopen = () => setIsLiveConnected(true);
       eventSource.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -217,170 +231,82 @@ export default function App() {
             updateProfileState(data);
             setIsLiveConnected(true);
           }
-        } catch (e) {
-          console.error('Error parsing live event payload:', e);
-        }
+        } catch (e) {}
       };
-      eventSource.onerror = () => {
-        setIsLiveConnected(false);
-      };
-    } catch (e) {
-      console.warn('SSE connect notice:', e);
-    }
-
-    const interval = setInterval(fetchLatestProfile, 8000);
+    } catch (e) {}
 
     return () => {
-      if (eventSource) {
-        eventSource.close();
-      }
-      clearInterval(interval);
+      if (unsubscribeFirestore) unsubscribeFirestore();
+      if (eventSource) eventSource.close();
     };
   }, [updateProfileState]);
 
-  // Listen for Google Auth Popup postMessage
-  useEffect(() => {
-    const handleAuthMessage = async (event: MessageEvent) => {
-      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS' && event.data?.email) {
-        setIsAuthLoading(true);
-        try {
-          const verifyRes = await fetch('/api/auth/verify-google', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              email: event.data.email,
-              token: event.data.token
-            })
-          });
-
-          const authData = await verifyRes.json();
-          if (verifyRes.ok && authData.isAdmin) {
-            setIsAdmin(true);
-            if (authData.token) {
-              localStorage.setItem('nexus_admin_session', authData.token);
-            }
-            setIsAdminOpen(true);
-            showToast('Успішний вхід через Google!', 'success');
-          } else {
-            showToast(authData.error || 'У доступі відмовлено: цей Google акаунт не має прав адміністратора', 'error');
-          }
-        } catch (err: any) {
-          showToast('Помилка перевірки акаунта: ' + (err?.message || ''), 'error');
-        } finally {
-          setIsAuthLoading(false);
-        }
-      } else if (event.data?.type === 'GOOGLE_AUTH_ERROR') {
-        setIsAuthLoading(false);
-        showToast('Помилка авторизації Google: ' + (event.data.error || 'Спробуйте ще раз'), 'error');
-      }
-    };
-
-    window.addEventListener('message', handleAuthMessage);
-    return () => window.removeEventListener('message', handleAuthMessage);
-  }, [showToast]);
-
-  // 1-Click Google Sign In (Direct account selection popup - NO forms, NO exposed emails)
-  const handleGoogleSignInClick = () => {
+  // 1-Click Google Sign In with Firebase Auth
+  const handleGoogleSignInClick = async () => {
     if (isAdmin) {
       setIsAdminOpen(true);
       return;
     }
 
     setIsAuthLoading(true);
-
-    // 1. Try Google Identity Services Token Client if available in window
-    if (typeof (window as any).google?.accounts?.oauth2?.initTokenClient === 'function') {
-      try {
-        const client = (window as any).google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
-          prompt: 'select_account',
-          callback: async (tokenResponse: any) => {
-            if (tokenResponse.error) {
-              setIsAuthLoading(false);
-              showToast('Помилка вибору акаунта Google: ' + tokenResponse.error, 'error');
-              return;
-            }
-
-            if (tokenResponse.access_token) {
-              try {
-                const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
-                });
-                const userInfo = await userRes.json();
-
-                const verifyRes = await fetch('/api/auth/verify-google', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    email: userInfo.email,
-                    token: tokenResponse.access_token
-                  })
-                });
-
-                const authData = await verifyRes.json();
-                if (verifyRes.ok && authData.isAdmin) {
-                  setIsAdmin(true);
-                  if (authData.token) {
-                    localStorage.setItem('nexus_admin_session', authData.token);
-                  }
-                  setIsAdminOpen(true);
-                  showToast('Успішний вхід через Google!', 'success');
-                } else {
-                  showToast(authData.error || 'У доступі відмовлено: цей Google акаунт не має прав адміністратора', 'error');
-                }
-              } catch (err: any) {
-                showToast('Помилка перевірки: ' + (err?.message || ''), 'error');
-              } finally {
-                setIsAuthLoading(false);
-              }
-            }
-          }
-        });
-
-        client.requestAccessToken();
-        return;
-      } catch (err) {
-        console.warn('GSI init notice, using direct popup flow:', err);
+    try {
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      
+      if (user && user.email && user.email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim()) {
+        setIsAdmin(true);
+        setIsAdminOpen(true);
+        showToast('Успішний вхід через Google!', 'success');
+      } else {
+        await signOut(auth);
+        setIsAdmin(false);
+        showToast('У доступі відмовлено: цей Google акаунт не має прав адміністратора', 'error');
       }
-    }
-
-    // 2. Direct Official Google Account Selection Popup Flow
-    const redirectUri = `${window.location.origin}/auth/callback`;
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=email%20profile&prompt=select_account`;
-
-    const width = 500;
-    const height = 620;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-
-    const popup = window.open(
-      googleAuthUrl,
-      'GoogleSignIn',
-      `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
-    );
-
-    if (!popup) {
+    } catch (err: any) {
+      console.error('Firebase Auth error:', err);
+      if (err.code === 'auth/popup-closed-by-user') {
+        showToast('Вікно авторизації було закрите', 'info');
+      } else if (err.code === 'auth/unauthorized-domain') {
+        showToast('Домен не авторизовано у Firebase Console. Додайте домен у Firebase Authentication Settings -> Authorized Domains.', 'error');
+      } else {
+        showToast('Помилка авторизації Google: ' + (err?.message || 'Спробуйте ще раз'), 'error');
+      }
+    } finally {
       setIsAuthLoading(false);
-      showToast('Будь ласка, дозвольте спливаючі вікна (popups) у браузері для вибору Google акаунта.', 'error');
     }
   };
 
   // Logout handler
-  const handleLogout = () => {
-    localStorage.removeItem('nexus_admin_session');
-    setIsAdmin(false);
-    setIsAdminOpen(false);
-    showToast('Ви успішно вийшли з акаунта адміністратора', 'info');
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setIsAdmin(false);
+      setIsAdminOpen(false);
+      showToast('Ви успішно вийшли з акаунта адміністратора', 'info');
+    } catch (e: any) {
+      setIsAdmin(false);
+      setIsAdminOpen(false);
+    }
   };
 
-  // Save profile changes to the Server Database
+  // Save profile changes to Firebase Firestore + Server
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
     try {
+      const sanitized = sanitizeProfilePayload(updatedData);
+
+      // 1. Save to Firebase Firestore
+      try {
+        const docRef = doc(db, 'nexus_profile', 'main');
+        await setDoc(docRef, sanitized, { merge: true });
+      } catch (firestoreErr) {
+        console.warn('Firestore write warning:', firestoreErr);
+      }
+
+      // 2. Save to Server DB backup
       const res = await fetch('/api/profile', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedData)
+        body: JSON.stringify(sanitized)
       });
 
       if (!res.ok) {
@@ -392,7 +318,7 @@ export default function App() {
         updateProfileState(json.profile);
       }
 
-      showToast('Всі зміни збережено в базі даних та оновлено для всіх відвідувачів!', 'success');
+      showToast('Всі зміни збережено у Firebase та оновлено для всіх відвідувачів!', 'success');
     } catch (err: any) {
       console.error('Database save error:', err);
       showToast('Помилка збереження даних: ' + (err?.message || 'Невідома помилка'), 'error');
@@ -422,7 +348,7 @@ export default function App() {
         <div className="w-full flex items-center justify-between mb-5 gap-2">
           {/* Realtime Live Status */}
           <div 
-            title="База даних синхронізована в реальному часі для всіх відвідувачів"
+            title="Синхронізація в реальному часі для всіх відвідувачів"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[10px] sm:text-[11px] font-bold text-[#64748b] shrink-0"
           >
             <Radio className={`w-3 h-3 ${isLiveConnected ? 'text-emerald-500 animate-pulse' : 'text-amber-500'}`} />
@@ -590,7 +516,7 @@ export default function App() {
           )}
 
           <div className="mt-2 text-[10px] text-[#94a3b8] font-medium tracking-wider uppercase">
-            NEXUS Bio © 2026 • Realtime Database
+            NEXUS Bio © 2026 • Realtime Firebase
           </div>
         </div>
       </div>

@@ -1,0 +1,56 @@
+{
+  "entities": {
+    "BioProfile": {
+      "title": "BioProfile",
+      "description": "NEXUS verified bio profile configuration and data model",
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "description": "Public display brand name",
+          "maxLength": 60
+        },
+        "handle": {
+          "type": "string",
+          "description": "Social media handle like @chak.tt",
+          "maxLength": 40,
+          "pattern": "^@?[a-zA-Z0-9_.]+$"
+        },
+        "bioText": {
+          "type": "string",
+          "description": "Public bio description text",
+          "maxLength": 400
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "Verified avatar image URL",
+          "maxLength": 500
+        },
+        "promoCode": {
+          "type": "string",
+          "description": "Official brand promo code",
+          "maxLength": 40
+        },
+        "stats": {
+          "type": "object",
+          "description": "TikTok channel live metrics"
+        },
+        "links": {
+          "type": "array",
+          "description": "Array of official links"
+        },
+        "news": {
+          "type": "array",
+          "description": "Array of verified news items"
+        }
+      },
+      "required": ["displayName", "handle"]
+    }
+  },
+  "firestore": {
+    "/nexus_profile/{profileId}": {
+      "schema": "BioProfile",
+      "description": "Store for public bio profile documents, writable exclusively by the verified administrator account"
+    }
+  }
+}

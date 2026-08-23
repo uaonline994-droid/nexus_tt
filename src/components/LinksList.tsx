@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ExternalLink, Copy, Check, Sparkles, Youtube, Instagram, Send, Globe, Music, ShoppingBag, Mail, Twitter } from 'lucide-react';
 import { BioLink } from '../types';
+import { sanitizeUrl } from '../security';
 
 interface LinksListProps {
   links: BioLink[];
@@ -25,7 +26,8 @@ export const LinksList: React.FC<LinksListProps> = ({ links, onLinkClick }) => {
   const handleCopy = (e: React.MouseEvent, link: BioLink) => {
     e.preventDefault();
     e.stopPropagation();
-    navigator.clipboard.writeText(link.url);
+    const safeUrl = sanitizeUrl(link.url);
+    navigator.clipboard.writeText(safeUrl);
     setCopiedId(link.id);
     setTimeout(() => setCopiedId(null), 2000);
   };
@@ -34,11 +36,8 @@ export const LinksList: React.FC<LinksListProps> = ({ links, onLinkClick }) => {
     if (onLinkClick) {
       onLinkClick(link.id);
     }
-    let targetUrl = link.url.trim();
-    if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-      targetUrl = `https://${targetUrl}`;
-    }
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    const safeUrl = sanitizeUrl(link.url);
+    window.open(safeUrl, '_blank', 'noopener,noreferrer');
   };
 
   if (!links || links.length === 0) {

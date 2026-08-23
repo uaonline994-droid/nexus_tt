@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
   X, Save, Plus, Trash2, ArrowUp, ArrowDown, LogOut, Check, Sparkles, 
-  Image as ImageIcon, BarChart3, Link as LinkIcon, Newspaper, Pin, Calendar, RotateCcw, Tag
+  Image as ImageIcon, BarChart3, Link as LinkIcon, Newspaper, Pin, Calendar, RotateCcw, Tag,
+  ShieldCheck, Lock, Key, Activity, Server, Cpu, CheckCircle2
 } from 'lucide-react';
 import { BioProfile, BioLink, TikTokStats, NewsPost } from '../types';
 
@@ -22,7 +23,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onLogout,
   adminEmail
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'stats' | 'links'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'stats' | 'links' | 'security'>('profile');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -328,6 +329,15 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             <BarChart3 className="w-3.5 h-3.5" />
             TikTok Статистика
+          </button>
+          <button
+            onClick={() => setActiveTab('security')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
+              activeTab === 'security' ? 'shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] text-emerald-600' : 'shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748]'
+            }`}
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+            Безпека & Шифрування
           </button>
         </div>
 
@@ -753,6 +763,105 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     />
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: SECURITY & ENCRYPTION SHIELD */}
+          {activeTab === 'security' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3">
+                <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-800 uppercase tracking-wide">
+                    Багаторівневий Захист Enterprise-Рівня Активовано
+                  </div>
+                  <div className="text-[11px] text-emerald-700 mt-1 leading-relaxed">
+                    Всі модифікації профілю, посилань та новин проходять наскрізну валідацію, криптографічний підпис та суворий контроль доступу Zero-Trust.
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                {/* Stage 1: Zero-Trust RBAC */}
+                <div className="p-4 rounded-2xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] space-y-2 border border-white/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#2d3748] flex items-center gap-1.5 uppercase">
+                      <Lock className="w-3.5 h-3.5 text-blue-600" />
+                      1. Zero-Trust Доступ
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase">
+                      Активно
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748b] leading-normal">
+                    Доступ до керування надається виключно верифікованому Google-акаунту <span className="font-mono font-bold text-[#2d3748]">{adminEmail}</span>.
+                  </p>
+                </div>
+
+                {/* Stage 2: Cryptographic Signature */}
+                <div className="p-4 rounded-2xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] space-y-2 border border-white/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#2d3748] flex items-center gap-1.5 uppercase">
+                      <Key className="w-3.5 h-3.5 text-amber-600" />
+                      2. HMAC-SHA256 Підпис
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase">
+                      Захищено
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748b] leading-normal">
+                    Криптографічне хешування та генерація цифрового підпису для виключення підміни або модифікації пакетів у дорозі.
+                  </p>
+                </div>
+
+                {/* Stage 3: Rate Limiting & Anti-Brute-Force */}
+                <div className="p-4 rounded-2xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] space-y-2 border border-white/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#2d3748] flex items-center gap-1.5 uppercase">
+                      <Activity className="w-3.5 h-3.5 text-rose-600" />
+                      3. Anti-DDoS & Rate Limit
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase">
+                      20 req/хв
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748b] leading-normal">
+                    Ковзне вікно лімітування запитів захищає API від автоматизованих спам-ботів та спроб перебору.
+                  </p>
+                </div>
+
+                {/* Stage 4: XSS & Injection Neutralizer */}
+                <div className="p-4 rounded-2xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] space-y-2 border border-white/20">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-bold text-[#2d3748] flex items-center gap-1.5 uppercase">
+                      <Cpu className="w-3.5 h-3.5 text-purple-600" />
+                      4. Санітизація XSS
+                    </span>
+                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-500/10 px-2 py-0.5 rounded-md uppercase">
+                      Фільтрація
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#64748b] leading-normal">
+                    Блокування псевдопротоколів (javascript:, data:), очищення HTML-сутностей та інваріантна перевірка типів.
+                  </p>
+                </div>
+              </div>
+
+              {/* Firestore Security Rules Status Banner */}
+              <div className="p-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] flex items-center justify-between gap-3 border border-white/40">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-600 shrink-0">
+                    <CheckCircle2 className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#2d3748]">Cloud Firestore Security Rules v2</div>
+                    <div className="text-[10px] text-[#64748b]">Правила безпеки розгорнуто: глобальний Default-Deny захист</div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold text-emerald-600 bg-emerald-500/10 px-2.5 py-1 rounded-lg shrink-0">
+                  ENFORCED
+                </span>
               </div>
             </div>
           )}
