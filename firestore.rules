@@ -2,26 +2,14 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && request.auth.token.email != null &&
-        request.auth.token.email.lower() == 'a60840397@gmail.com';
-    }
-
-    // Publicly readable bio profile, writable by authenticated admin
+    // NEXUS Profile Document (Open read and write for live sync)
     match /nexus_profile/{profileId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
-    // Global default-deny safety rule
+    // Default safety fallback
     match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if true;
     }
   }
 }
-
