@@ -16,7 +16,7 @@ import {
   Sliders,
   Loader2
 } from 'lucide-react';
-import { ADMIN_EMAIL } from './firebase';
+import { ADMIN_EMAIL, GOOGLE_CLIENT_ID } from './firebase';
 import { BioProfile, ToastMessage } from './types';
 import { StatsSection } from './components/StatsSection';
 import { PromoSection } from './components/PromoSection';
@@ -292,7 +292,7 @@ export default function App() {
     if (typeof (window as any).google?.accounts?.oauth2?.initTokenClient === 'function') {
       try {
         const client = (window as any).google.accounts.oauth2.initTokenClient({
-          client_id: '931281699968-3h16a5d4gve3q62l00flq3sllf35q74c.apps.googleusercontent.com',
+          client_id: GOOGLE_CLIENT_ID,
           scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
           prompt: 'select_account',
           callback: async (tokenResponse: any) => {
@@ -346,9 +346,8 @@ export default function App() {
     }
 
     // 2. Direct Official Google Account Selection Popup Flow
-    const clientId = '931281699968-3h16a5d4gve3q62l00flq3sllf35q74c.apps.googleusercontent.com';
     const redirectUri = `${window.location.origin}/auth/callback`;
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=email%20profile&prompt=select_account`;
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${GOOGLE_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=email%20profile&prompt=select_account`;
 
     const width = 500;
     const height = 620;
