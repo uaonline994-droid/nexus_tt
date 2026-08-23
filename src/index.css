@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --nm-bg: #e0e5ec;
+    --nm-shadow-light: #ffffff;
+    --nm-shadow-dark: #bec4cf;
+    --nm-shadow-darker: #a3b1c6;
+    --nm-text-main: #2d3748;
+    --nm-text-muted: #64748b;
+    --nm-text-subtle: #94a3b8;
+    --accent-nexus: #3b82f6;
+    --accent-nexus-glow: rgba(59, 130, 246, 0.4);
+  }
+
+  body {
+    background-color: #e0e5ec;
+    color: #2d3748;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Professional Polish & Futuristic Neumorphism Classes */
+.nm-card-outer {
+  background: #e0e5ec;
+  box-shadow: 20px 20px 60px #bec4cf, -20px -20px 60px #ffffff;
+}
+
+.nm-flat {
+  background: #e0e5ec;
+  box-shadow: 8px 8px 16px #bec4cf, -8px -8px 16px #ffffff;
+}
+
+.nm-flat-sm {
+  background: #e0e5ec;
+  box-shadow: 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+}
+
+.nm-flat-xs {
+  background: #e0e5ec;
+  box-shadow: 3px 3px 6px #bec4cf, -3px -3px 6px #ffffff;
+}
+
+.nm-inset {
+  background: #e0e5ec;
+  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff;
+}
+
+.nm-inset-sm {
+  background: #e0e5ec;
+  box-shadow: inset 2px 2px 5px #bec4cf, inset -2px -2px 5px #ffffff;
+}
+
+.nm-avatar-inset {
+  background: #e0e5ec;
+  box-shadow: inset 10px 10px 20px #bec4cf, inset -10px -10px 20px #ffffff;
+}
+
+.nm-avatar-outer {
+  background: #e0e5ec;
+  box-shadow: 10px 10px 24px #bec4cf, -10px -10px 24px #ffffff;
+}
+
+.nm-button {
+  background: #e0e5ec;
+  box-shadow: 8px 8px 16px #bec4cf, -8px -8px 16px #ffffff;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.nm-button:hover {
+  box-shadow: 4px 4px 10px #bec4cf, -4px -4px 10px #ffffff;
+  transform: translateY(-1px);
+}
+
+.nm-button:active, .nm-button-active {
+  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff !important;
+  transform: translateY(1px) scale(0.99);
+}
+
+.nm-input {
+  background: #e0e5ec;
+  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.nm-input:focus {
+  box-shadow: inset 5px 5px 10px #afb6c2, inset -5px -5px 10px #ffffff;
+}
+
+/* Glowing Promo badge animation */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(59, 130, 246, 0.3), 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+  }
+  50% {
+    box-shadow: 0 0 25px rgba(59, 130, 246, 0.6), 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+  }
+}
+
+.promo-glow {
+  animation: pulse-glow 3s infinite ease-in-out;
+}
+
+/* Custom smooth scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #e0e5ec;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #bec4cf;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #a3b1c6;
+}

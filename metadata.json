@@ -1,0 +1,6 @@
+{
+  "name": "NEXUS • TikTok Bio & News",
+  "description": "Офіційний сайт-візитка NEXUS (@chak.tt) із промокодом #NEXUS, стрічкою новин у реальному часі, TikTok-статистикою та адмін-панеллю.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
