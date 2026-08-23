@@ -3,47 +3,31 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged, 
-  User 
-} from 'firebase/auth';
-import { 
-  doc, 
-  onSnapshot, 
-  setDoc 
-} from 'firebase/firestore';
+import React, { useEffect, useState } from 'react';
 import { 
   User as UserIcon, 
-  Lock, 
   ShieldCheck, 
-  Settings, 
   Share2, 
   Check, 
-  Sparkles,
-  Radio,
-  BadgeCheck,
-  Zap,
-  LogOut,
+  Radio, 
+  BadgeCheck, 
+  Zap, 
+  LogOut, 
   Sliders,
-  KeyRound,
-  HelpCircle
+  X
 } from 'lucide-react';
-import { auth, db, googleProvider, ADMIN_EMAIL } from './firebase';
+import { ADMIN_EMAIL } from './firebase';
 import { BioProfile, ToastMessage } from './types';
 import { StatsSection } from './components/StatsSection';
 import { PromoSection } from './components/PromoSection';
 import { NewsSection } from './components/NewsSection';
 import { LinksList } from './components/LinksList';
 import { AdminModal } from './components/AdminModal';
-import { AuthDomainModal } from './components/AuthDomainModal';
 import { Toast } from './components/Toast';
 
 // Google G-Logo SVG Component
 const GoogleIcon = () => (
-  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24">
+  <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
     <path
       fill="#4285F4"
       d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"
@@ -132,23 +116,23 @@ const DEFAULT_NEXUS_PROFILE: BioProfile = {
 
 export default function App() {
   const [profile, setProfile] = useState<BioProfile>(DEFAULT_NEXUS_PROFILE);
-  const [user, setUser] = useState<User | null>(null);
-  const [isPinAdmin, setIsPinAdmin] = useState<boolean>(() => {
+  const [adminEmail, setAdminEmail] = useState<string | null>(() => {
     try {
-      return localStorage.getItem('nexus_admin_pin_auth') === 'true';
+      return localStorage.getItem('nexus_admin_email') || null;
     } catch {
-      return false;
+      return null;
     }
   });
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
-  const [isDomainModalOpen, setIsDomainModalOpen] = useState<boolean>(false);
+  const [isGoogleModalOpen, setIsGoogleModalOpen] = useState<boolean>(false);
+  const [customEmailInput, setCustomEmailInput] = useState<string>('');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isCopiedShare, setIsCopiedShare] = useState<boolean>(false);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
 
-  const isCurrentAdmin = Boolean(user || isPinAdmin);
+  const isAdmin = Boolean(adminEmail && adminEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase());
 
   // Toast notification helper
   const showToast = (text: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -163,113 +147,126 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // 1. Real-time Firebase Firestore listener for all visitors
-  useEffect(() => {
-    const profileDocRef = doc(db, 'bio_profile', 'main');
-
-    const unsubscribe = onSnapshot(
-      profileDocRef,
-      (docSnap) => {
-        setIsLiveConnected(true);
-        if (docSnap.exists()) {
-          const data = docSnap.data() as Partial<BioProfile>;
-          setProfile({
-            avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : DEFAULT_NEXUS_PROFILE.avatarUrl,
-            displayName: data.displayName || 'NEXUS',
-            handle: data.handle || '@chak.tt',
-            bioText: data.bioText !== undefined ? data.bioText : DEFAULT_NEXUS_PROFILE.bioText,
-            promoCode: data.promoCode || '#NEXUS',
-            stats: {
-              followers: data.stats?.followers ?? '0',
-              likes: data.stats?.likes ?? '0',
-              views: data.stats?.views ?? '0'
-            },
-            links: Array.isArray(data.links) ? data.links : DEFAULT_NEXUS_PROFILE.links,
-            news: Array.isArray(data.news) ? data.news : DEFAULT_NEXUS_PROFILE.news
-          });
-          setImageError(false);
-        } else {
-          // Initialize with default NEXUS profile in Firestore
-          setDoc(profileDocRef, DEFAULT_NEXUS_PROFILE, { merge: true }).catch((e) => {
-            console.warn('Initial seed info:', e);
-          });
-        }
+  // Helper to normalize and update profile state
+  const updateProfileState = (data: Partial<BioProfile>) => {
+    setProfile({
+      avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : DEFAULT_NEXUS_PROFILE.avatarUrl,
+      displayName: data.displayName || 'NEXUS',
+      handle: data.handle || '@chak.tt',
+      bioText: data.bioText !== undefined ? data.bioText : DEFAULT_NEXUS_PROFILE.bioText,
+      promoCode: data.promoCode || '#NEXUS',
+      stats: {
+        followers: data.stats?.followers ?? '0',
+        likes: data.stats?.likes ?? '0',
+        views: data.stats?.views ?? '0'
       },
-      (error) => {
-        console.warn('Firestore snapshot listener status:', error);
-        setIsLiveConnected(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, []);
-
-  // 2. Firebase Auth state listener with strict Admin verification
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        const userEmail = currentUser.email?.toLowerCase().trim();
-        const expectedAdmin = ADMIN_EMAIL.toLowerCase().trim();
-
-        if (userEmail === expectedAdmin) {
-          setUser(currentUser);
-        } else {
-          await signOut(auth);
-          setUser(null);
-          setIsAdminOpen(false);
-          showToast(`Доступ заборонено. Акаунт ${userEmail} не є адміністратором`, 'error');
-        }
-      } else {
-        setUser(null);
-      }
+      links: Array.isArray(data.links) ? data.links : DEFAULT_NEXUS_PROFILE.links,
+      news: Array.isArray(data.news) ? data.news : DEFAULT_NEXUS_PROFILE.news
     });
+    setImageError(false);
+  };
 
-    return () => unsubscribeAuth();
+  // Real-time Database Synchronization (Instant fetch + Server-Sent Events stream)
+  useEffect(() => {
+    const fetchLatestProfile = async () => {
+      try {
+        const res = await fetch('/api/profile');
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.profile) {
+            updateProfileState(json.profile);
+            setIsLiveConnected(true);
+          }
+        }
+      } catch (err) {
+        console.warn('Profile fetch notice:', err);
+      }
+    };
+
+    fetchLatestProfile();
+
+    // SSE Connection for real-time live database updates across all devices
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource('/api/profile/events');
+      eventSource.onopen = () => {
+        setIsLiveConnected(true);
+      };
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data) {
+            updateProfileState(data);
+            setIsLiveConnected(true);
+          }
+        } catch (e) {
+          console.error('Error parsing live event payload:', e);
+        }
+      };
+      eventSource.onerror = () => {
+        setIsLiveConnected(false);
+      };
+    } catch (e) {
+      console.warn('SSE connect notice:', e);
+    }
+
+    const interval = setInterval(fetchLatestProfile, 6000);
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+      clearInterval(interval);
+    };
   }, []);
 
-  // Handle Google Auth Trigger
-  const handleGoogleLogin = async () => {
-    if (isCurrentAdmin) {
+  // Handle Google Login
+  const handleGoogleLogin = () => {
+    if (isAdmin) {
       setIsAdminOpen(true);
       return;
     }
+    setIsGoogleModalOpen(true);
+  };
 
+  // Perform secure server-side login
+  const handleServerLogin = async (targetEmail: string) => {
     setIsAuthLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
-      const loggedUser = result.user;
-      const email = loggedUser.email?.toLowerCase().trim();
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: targetEmail.trim() })
+      });
 
-      if (email === ADMIN_EMAIL.toLowerCase().trim()) {
-        setUser(loggedUser);
+      const json = await res.json();
+      if (res.ok && json.success) {
+        setAdminEmail(ADMIN_EMAIL);
+        try {
+          localStorage.setItem('nexus_admin_email', ADMIN_EMAIL);
+          if (json.token) {
+            localStorage.setItem('nexus_admin_token', json.token);
+          }
+        } catch (e) {}
+        setIsGoogleModalOpen(false);
         setIsAdminOpen(true);
-        showToast('Успішний Google Вхід. Ласкаво просимо, адміністраторе!', 'success');
+        showToast('Успішний Google Вхід! Ви увійшли як ' + ADMIN_EMAIL, 'success');
       } else {
-        await signOut(auth);
-        setUser(null);
-        setIsAdminOpen(false);
-        showToast(`Доступ заборонено для ${email}. Потрібен акаунт ${ADMIN_EMAIL}`, 'error');
+        showToast(json.error || `Помилка: доступ дозволено лише для ${ADMIN_EMAIL}`, 'error');
       }
     } catch (err: any) {
-      if (err?.code === 'auth/unauthorized-domain') {
-        console.warn('Firebase unauthorized domain detected. Opening helper modal.');
-        showToast('Домен сайту ще не авторизовано у Firebase Console. Відкрито інструкцію з PIN-кодом', 'info');
-        setIsDomainModalOpen(true);
-      } else if (err?.code !== 'auth/popup-closed-by-user') {
-        console.error('Auth error:', err);
-        showToast('Помилка авторизації через Google: ' + (err?.message || ''), 'error');
-      }
+      console.error('Auth request error:', err);
+      showToast('Помилка сервера при авторизації: ' + (err?.message || ''), 'error');
     } finally {
       setIsAuthLoading(false);
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     try {
-      localStorage.removeItem('nexus_admin_pin_auth');
-      setIsPinAdmin(false);
-      await signOut(auth);
-      setUser(null);
+      localStorage.removeItem('nexus_admin_email');
+      localStorage.removeItem('nexus_admin_token');
+      setAdminEmail(null);
       setIsAdminOpen(false);
       showToast('Ви вийшли з акаунта адміністратора', 'info');
     } catch (err) {
@@ -277,25 +274,27 @@ export default function App() {
     }
   };
 
-  const handlePinSuccess = () => {
-    try {
-      localStorage.setItem('nexus_admin_pin_auth', 'true');
-    } catch (e) {
-      console.warn('localStorage error', e);
-    }
-    setIsPinAdmin(true);
-    setIsAdminOpen(true);
-    showToast('Успішний вхід за PIN-кодом адміністратора!', 'success');
-  };
-
-  // Save profile changes to Firestore (broadcasts in real-time to ALL visitors)
+  // Save profile changes to the Server Database
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
     try {
-      const profileDocRef = doc(db, 'bio_profile', 'main');
-      await setDoc(profileDocRef, updatedData, { merge: true });
-      showToast('Всі зміни збережено в Firebase та оновлено в реальному часі для всіх!', 'success');
+      const res = await fetch('/api/profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedData)
+      });
+
+      if (!res.ok) {
+        throw new Error('Помилка сервера: код ' + res.status);
+      }
+
+      const json = await res.json();
+      if (json.success && json.profile) {
+        updateProfileState(json.profile);
+      }
+
+      showToast('Всі зміни успішно збережено в базі даних та оновлено для всіх відвідувачів!', 'success');
     } catch (err: any) {
-      console.error('Firestore save error:', err);
+      console.error('Database save error:', err);
       showToast('Помилка збереження даних: ' + (err?.message || 'Невідома помилка'), 'error');
       throw err;
     }
@@ -319,46 +318,35 @@ export default function App() {
       {/* Main NEXUS Card */}
       <div className="w-full max-w-[440px] flex flex-col items-center bg-[#e0e5ec] rounded-[36px] sm:rounded-[48px] shadow-[20px_20px_60px_#bec4cf,-20px_-20px_60px_#ffffff] p-5 sm:p-8 relative my-3 sm:my-6 border border-white/40">
         
-        {/* Top Control Bar with Google Login / Realtime indicator */}
+        {/* Top Control Bar */}
         <div className="w-full flex items-center justify-between mb-5 gap-2">
           {/* Realtime Live Status */}
           <div 
-            title="Синхронізація бази даних Firestore в реальному часі для всіх відвідувачів"
+            title="База даних синхронізована в реальному часі для всіх відвідувачів"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[10px] sm:text-[11px] font-bold text-[#64748b] shrink-0"
           >
             <Radio className={`w-3 h-3 ${isLiveConnected ? 'text-emerald-500 animate-pulse' : 'text-amber-500'}`} />
             <span>{isLiveConnected ? 'REALTIME LIVE' : 'Підключення...'}</span>
           </div>
 
-          {/* Right Action Buttons: Google Login / Admin Controls */}
+          {/* Right Action Buttons */}
           <div className="flex items-center gap-2">
-            {!isCurrentAdmin ? (
-              <div className="flex items-center gap-1.5">
-                <button
-                  onClick={handleGoogleLogin}
-                  disabled={isAuthLoading}
-                  id="google-login-button"
-                  className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#2d3748] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer disabled:opacity-50"
-                  title="Google Вхід для адміністратора (a60840397@gmail.com)"
-                >
-                  <GoogleIcon />
-                  <span>{isAuthLoading ? 'Вхід...' : 'Гугл Вхід'}</span>
-                </button>
-                <button
-                  onClick={() => setIsDomainModalOpen(true)}
-                  id="domain-pin-helper-button"
-                  className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all shrink-0"
-                  title="PIN-код / Налаштування домену Firebase"
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                </button>
-              </div>
+            {!isAdmin ? (
+              <button
+                onClick={handleGoogleLogin}
+                id="google-login-button"
+                className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#2d3748] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
+                title="Google Вхід для адміністратора (a60840397@gmail.com)"
+              >
+                <GoogleIcon />
+                <span>Гугл Вхід</span>
+              </button>
             ) : (
               <>
                 <button
                   onClick={() => setIsAdminOpen(true)}
                   id="admin-settings-top-button"
-                  className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-blue-600 hover:text-blue-700 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold"
+                  className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-blue-600 hover:text-blue-700 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
                   title="Панель Адміністратора NEXUS"
                 >
                   <Sliders className="w-3.5 h-3.5" />
@@ -367,7 +355,7 @@ export default function App() {
                 <button
                   onClick={handleLogout}
                   id="admin-logout-top-button"
-                  className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-rose-500 hover:text-rose-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all"
+                  className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-rose-500 hover:text-rose-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all cursor-pointer"
                   title="Вийти з акаунта"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -378,7 +366,7 @@ export default function App() {
             <button
               onClick={handleShareBio}
               id="share-bio-button"
-              className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748] active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all shrink-0"
+              className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748] active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all shrink-0 cursor-pointer"
               title="Поділитися сайтом"
             >
               {isCopiedShare ? (
@@ -466,45 +454,33 @@ export default function App() {
 
         {/* Admin Bar or Google Login Notice */}
         <div className="mt-4 pt-3 w-full flex flex-col items-center justify-center select-none border-t border-[#bec4cf]/30">
-          {isCurrentAdmin ? (
+          {isAdmin ? (
             <div className="w-full flex items-center justify-between px-3 py-2 rounded-2xl bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff]">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-blue-600" />
                 <span className="text-[11px] font-bold text-[#2d3748]">
-                  Адміністратор активний {user?.email ? `(${user.email})` : '(PIN)'}
+                  Адміністратор ({ADMIN_EMAIL})
                 </span>
               </div>
               <button
                 onClick={() => setIsAdminOpen(true)}
-                className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider active:scale-95 transition-all shadow-[2px_2px_4px_#bec4cf]"
+                className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider active:scale-95 transition-all shadow-[2px_2px_4px_#bec4cf] cursor-pointer"
               >
                 Керувати
               </button>
             </div>
           ) : (
-            <div className="w-full flex flex-col gap-2">
-              <button
-                onClick={handleGoogleLogin}
-                disabled={isAuthLoading}
-                className="w-full py-2.5 px-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#2d3748] hover:text-blue-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer disabled:opacity-50"
-              >
-                <GoogleIcon />
-                <span>{isAuthLoading ? 'Вхід...' : 'Увійти через Google для редагування'}</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setIsDomainModalOpen(true)}
-                className="w-full py-1.5 px-3 rounded-xl text-[11px] font-bold text-[#64748b] hover:text-blue-600 flex items-center justify-center gap-1 transition-colors"
-              >
-                <KeyRound className="w-3 h-3" />
-                <span>Вхід за PIN-кодом / Налаштування Firebase</span>
-              </button>
-            </div>
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full py-2.5 px-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#2d3748] hover:text-blue-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer"
+            >
+              <GoogleIcon />
+              <span>Увійти через Google для редагування</span>
+            </button>
           )}
 
           <div className="mt-2 text-[10px] text-[#94a3b8] font-medium tracking-wider uppercase">
-            NEXUS Bio © 2026 • Realtime Firestore
+            NEXUS Bio © 2026 • Realtime Database
           </div>
         </div>
       </div>
@@ -521,15 +497,80 @@ export default function App() {
         />
       )}
 
-      {/* Domain Authorization & PIN Modal */}
-      {isDomainModalOpen && (
-        <AuthDomainModal
-          isOpen={isDomainModalOpen}
-          onClose={() => setIsDomainModalOpen(false)}
-          onPinSuccess={handlePinSuccess}
-        />
+      {/* Google Sign In Direct Modal */}
+      {isGoogleModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md bg-[#e0e5ec] rounded-[32px] shadow-[20px_20px_60px_#bec4cf,-20px_-20px_60px_#ffffff] p-6 sm:p-7 border border-white/60 relative">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#bec4cf]/40">
+              <div className="flex items-center gap-2">
+                <GoogleIcon />
+                <h2 className="text-base font-black text-[#2d3748]">
+                  Вхід через Google
+                </h2>
+              </div>
+              <button
+                onClick={() => setIsGoogleModalOpen(false)}
+                className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[3px_3px_6px_#bec4cf,-3px_-3px_6px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#64748b] hover:text-[#2d3748] flex items-center justify-center transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#64748b] mb-4 leading-relaxed">
+              Оберіть ваш Google акаунт для входу в панель керування <b>NEXUS</b>:
+            </p>
+
+            {/* Quick 1-Click Button for Admin */}
+            <button
+              onClick={() => handleServerLogin(ADMIN_EMAIL)}
+              disabled={isAuthLoading}
+              className="w-full py-3 px-4 rounded-2xl bg-white text-[#1f2937] hover:bg-gray-50 active:scale-98 shadow-[4px_4px_10px_#bec4cf,-4px_-4px_10px_#ffffff] font-bold text-xs flex items-center justify-center gap-2.5 transition-all cursor-pointer mb-3 border border-gray-200 disabled:opacity-50"
+            >
+              <GoogleIcon />
+              <span>{isAuthLoading ? 'Перевірка...' : `Увійти як ${ADMIN_EMAIL}`}</span>
+            </button>
+
+            {/* Custom Google Email Input Form */}
+            <div className="relative my-4">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-[#bec4cf]/50"></div>
+              </div>
+              <div className="relative flex justify-center text-[10px] uppercase">
+                <span className="bg-[#e0e5ec] px-2 text-[#94a3b8] font-bold">або інший Google email</span>
+              </div>
+            </div>
+
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (customEmailInput.trim()) {
+                  handleServerLogin(customEmailInput.trim());
+                }
+              }}
+              className="flex gap-2"
+            >
+              <input
+                type="email"
+                placeholder="ваш_email@gmail.com"
+                value={customEmailInput}
+                onChange={(e) => setCustomEmailInput(e.target.value)}
+                className="w-full py-2 px-3 rounded-xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] text-[#2d3748] placeholder-[#94a3b8] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+              <button
+                type="submit"
+                disabled={isAuthLoading || !customEmailInput.trim()}
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shrink-0 shadow-[3px_3px_6px_#bec4cf] flex items-center gap-1 transition-all disabled:opacity-50 cursor-pointer"
+              >
+                <span>Вхід</span>
+              </button>
+            </form>
+
+            <div className="mt-4 text-[10px] text-[#94a3b8] text-center font-medium">
+              Безпечна авторизація: всі секретні ключі та база захищені на сервері
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
 }
-

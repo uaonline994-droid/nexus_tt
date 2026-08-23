@@ -762,7 +762,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
         <div className="p-6 sm:p-8 pt-4 border-t border-[#bec4cf]/30 bg-[#e0e5ec]">
           {saveSuccess && (
             <div className="mb-3 text-center text-xs font-bold text-emerald-600 animate-in fade-in flex items-center justify-center gap-1.5">
-              <Check className="w-4 h-4" /> Зміни опубліковано у Firebase!
+              <Check className="w-4 h-4" /> Зміни збережено в базі даних та опубліковано для всіх!
             </div>
           )}
 
