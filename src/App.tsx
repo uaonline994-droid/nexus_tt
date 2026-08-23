@@ -233,9 +233,19 @@ export default function App() {
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
     try {
       const sanitized = sanitizeProfilePayload(updatedData);
-      const saved = await saveProfileToDatabase(sanitized);
-      setProfile(saved);
-      showToast('Всі дані успішно збережено в базу даних та оновлено!', 'success');
+      const result = await saveProfileToDatabase(sanitized);
+      setProfile(result.profile);
+
+      if (result.firestoreSuccess) {
+        showToast('✅ Збережено в хмару Firebase! Зміни миттєво видно ВСІМ відвідувачам.', 'success');
+      } else {
+        showToast(
+          '⚠️ Збережено локально на цьому пристрої. Але запис у хмару Firebase повернув помилку: ' + 
+          (result.firestoreError || 'Помилка доступу до Firestore') + 
+          '. Переконайтеся, що в Firebase Console створено базу даних (Firestore Database -> Create database).',
+          'error'
+        );
+      }
     } catch (err: any) {
       console.error('Database save error:', err);
       showToast('Помилка збереження даних: ' + (err?.message || 'Невідома помилка'), 'error');

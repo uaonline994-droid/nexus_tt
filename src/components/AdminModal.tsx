@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { 
   X, Save, Plus, Trash2, ArrowUp, ArrowDown, LogOut, Check, Sparkles, 
   Image as ImageIcon, BarChart3, Link as LinkIcon, Newspaper, Pin, Calendar, RotateCcw, Tag,
-  ShieldCheck, Lock, Key, Activity, Server, Cpu, CheckCircle2
+  ShieldCheck, Lock, Key, Activity, Server, Cpu, CheckCircle2, Database, Download, Upload, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { BioProfile, BioLink, TikTokStats, NewsPost } from '../types';
+import { checkFirestoreConnection } from '../databaseService';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -23,9 +24,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onLogout,
   adminEmail
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'stats' | 'links' | 'security'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'stats' | 'links' | 'database'>('profile');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [cloudStatus, setCloudStatus] = useState<{ loading: boolean; connected: boolean | null; message: string }>({
+    loading: false,
+    connected: null,
+    message: ''
+  });
 
   // Form states
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl || '');
@@ -331,13 +337,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
             TikTok Статистика
           </button>
           <button
+            onClick={() => setActiveTab('database')}
+            className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
+              activeTab === 'database' ? 'shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] text-indigo-600' : 'shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748]'
+            }`}
+          >
+            <Database className="w-3.5 h-3.5 text-indigo-500" />
+            База Даних & Хмара
+          </button>
+          <button
             onClick={() => setActiveTab('security')}
             className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap ${
               activeTab === 'security' ? 'shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] text-emerald-600' : 'shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748]'
             }`}
           >
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            Безпека & Шифрування
+            Безпека
           </button>
         </div>
 
@@ -763,6 +778,104 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     />
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+              {/* TAB 4.5: DATABASE & CLOUD SYNC */}
+          {activeTab === 'database' && (
+            <div className="space-y-5">
+              {/* Firestore Cloud Status & Diagnostics Card */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-[#e0e5ec] shadow-[8px_8px_16px_#bec4cf,-8px_-8px_16px_#ffffff] border border-indigo-400/30 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Database className="w-4 h-4 text-indigo-600" />
+                    <span className="text-xs font-bold uppercase text-[#2d3748] tracking-wider">
+                      Хмара Firebase Firestore (Проєкт fir-50300)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCloudStatus({ loading: true, connected: null, message: 'Перевірка з\'єднання...' });
+                      const res = await checkFirestoreConnection();
+                      setCloudStatus({ loading: false, connected: res.connected, message: res.message });
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-[#e0e5ec] shadow-[3px_3px_6px_#bec4cf,-3px_-3px_6px_#ffffff] text-[11px] font-bold text-indigo-600 flex items-center gap-1.5 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${cloudStatus.loading ? 'animate-spin' : ''}`} />
+                    <span>Перевірити Хмару</span>
+                  </button>
+                </div>
+
+                {cloudStatus.connected === null && !cloudStatus.loading && (
+                  <div className="p-3.5 rounded-xl bg-indigo-500/5 text-[11px] text-[#64748b] leading-relaxed">
+                    💡 Щоб зміни бачили <strong>всі відвідувачі вашого сайту</strong>, переконайтеся що у Firebase Console активовано Firestore базу:
+                    <ol className="list-decimal ml-4 mt-1.5 space-y-1 text-[#2d3748] font-medium">
+                      <li>Перейдіть у <a href="https://console.firebase.google.com/project/fir-50300/firestore" target="_blank" rel="noreferrer" className="text-blue-600 underline font-bold">Firebase Console ➔ Firestore Database</a></li>
+                      <li>Якщо база ще не створена — натисніть кнопку <strong>«Create database»</strong>.</li>
+                      <li>Оберіть режим <strong>Test mode</strong> або <strong>Production</strong> і збережіть.</li>
+                    </ol>
+                  </div>
+                )}
+
+                {cloudStatus.connected === true && (
+                  <div className="p-3.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-800 font-bold flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{cloudStatus.message}</span>
+                  </div>
+                )}
+
+                {cloudStatus.connected === false && (
+                  <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-800 space-y-1">
+                    <div className="font-bold flex items-center gap-1.5 text-rose-700">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      Помилка доступу до хмари:
+                    </div>
+                    <p className="text-[10.5px] leading-relaxed font-mono">{cloudStatus.message}</p>
+                    <p className="text-[10.5px] font-sans pt-1 font-semibold text-rose-900">
+                      👉 Якщо ви ще не створили базу у Firebase Console, перейдіть у <strong>Build ➔ Firestore Database ➔ Create database</strong>.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* JSON Database Export / Download */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-[#e0e5ec] shadow-[8px_8px_16px_#bec4cf,-8px_-8px_16px_#ffffff] border border-white/40 space-y-3">
+                <span className="text-xs font-bold uppercase text-[#2d3748] tracking-wider flex items-center gap-2">
+                  <Download className="w-4 h-4 text-blue-600" />
+                  Прямий Експорт Файлу Бази Даних
+                </span>
+                <p className="text-[11px] text-[#64748b]">
+                  Ви можете в будь-який момент завантажити повний актуальний файл <code className="bg-slate-200 px-1 py-0.5 rounded text-[#2d3748] font-bold">nexus_database.json</code> з усіма зміненими підписниками, вподобайками, новинами та кнопками:
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentData = {
+                      displayName: displayName.trim() || 'NEXUS',
+                      handle: handle.trim() || '@chak.tt',
+                      bioText: bioText.trim(),
+                      avatarUrl: avatarUrl.trim(),
+                      promoCode: promoCode.trim() || '#NEXUS',
+                      stats: stats,
+                      links: links,
+                      news: news,
+                      updatedAt: Date.now()
+                    };
+                    const blob = new Blob([JSON.stringify(currentData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'nexus_database.json';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="px-4 py-2.5 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-blue-600 text-xs font-bold uppercase tracking-wider flex items-center gap-2 hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] active:scale-95 transition-all"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Завантажити nexus_database.json
+                </button>
               </div>
             </div>
           )}

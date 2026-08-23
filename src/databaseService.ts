@@ -9,6 +9,12 @@ const FIRESTORE_DOC_ID = 'main';
 
 export const DEFAULT_PROFILE: BioProfile = defaultDatabase as unknown as BioProfile;
 
+export interface SaveProfileResult {
+  profile: BioProfile;
+  firestoreSuccess: boolean;
+  firestoreError?: string;
+}
+
 /**
  * Loads profile from best available source synchronously (LocalStorage or default JSON file)
  */
@@ -55,11 +61,11 @@ export function normalizeProfile(raw: Partial<BioProfile>): BioProfile {
 
 /**
  * Save profile to ALL storage tiers:
- * 1. LocalStorage (instant, works on Netlify/static hosting)
- * 2. Firestore Cloud Database (syncs to cloud for all visitors)
+ * 1. LocalStorage (instant cache on current device)
+ * 2. Firestore Cloud Database (syncs to all visitors worldwide)
  * 3. Server API /api/profile (if backend server is active)
  */
-export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<BioProfile> {
+export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<SaveProfileResult> {
   const current = getInitialProfile();
   const merged: BioProfile = normalizeProfile({
     ...current,
@@ -78,14 +84,17 @@ export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<
     }
   }
 
-  // 2. Save to Firebase Firestore Cloud
-  let firestoreSaved = false;
+  // 2. Save to Firebase Firestore Cloud (CRITICAL FOR WORLDWIDE VISITORS)
+  let firestoreSuccess = false;
+  let firestoreError: string | undefined = undefined;
+
   try {
     const docRef = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
     await setDoc(docRef, merged, { merge: true });
-    firestoreSaved = true;
-  } catch (firestoreErr) {
-    console.warn('Firestore cloud save notice (fallback active):', firestoreErr);
+    firestoreSuccess = true;
+  } catch (err: any) {
+    console.error('Firestore cloud save error:', err);
+    firestoreError = err?.message || String(err);
   }
 
   // 3. Save to Server Node Backend if available (gracefully ignore 404 on static hosts like Netlify)
@@ -98,14 +107,46 @@ export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<
     if (res.ok) {
       const json = await res.json();
       if (json.success && json.profile) {
-        return normalizeProfile(json.profile);
+        return {
+          profile: normalizeProfile(json.profile),
+          firestoreSuccess,
+          firestoreError
+        };
       }
     }
   } catch (serverErr) {
     // Expected on static hosting like Netlify
   }
 
-  return merged;
+  return {
+    profile: merged,
+    firestoreSuccess,
+    firestoreError
+  };
+}
+
+/**
+ * Check if Firestore cloud database is connected and active
+ */
+export async function checkFirestoreConnection(): Promise<{ connected: boolean; message: string }> {
+  try {
+    const docRef = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return { connected: true, message: 'Підключено! Дані в хмарі синхронізовано.' };
+    } else {
+      return { connected: true, message: 'Підключено! Документ буде створено при першому збереженні.' };
+    }
+  } catch (err: any) {
+    const msg = err?.message || String(err);
+    if (msg.includes('not-found') || msg.includes('does not exist')) {
+      return { connected: false, message: 'База Firestore не створена у Firebase Console (Build -> Firestore Database -> Create Database).' };
+    }
+    if (msg.includes('permission') || msg.includes('Missing or insufficient')) {
+      return { connected: false, message: 'Помилка прав доступу Firestore Rules.' };
+    }
+    return { connected: false, message: msg };
+  }
 }
 
 /**
@@ -193,3 +234,4 @@ export function subscribeToProfile(onUpdate: (profile: BioProfile) => void): () 
     }
   };
 }
+
