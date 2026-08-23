@@ -6,12 +6,13 @@ import firebaseAppletConfig from "../firebase-applet-config.json";
 export const ADMIN_EMAIL = "a60840397@gmail.com";
 
 export const firebaseConfig = {
-  apiKey: firebaseAppletConfig.apiKey || "AIzaSyAQFrE-vzx8KwjV3Gte-L8JDeVJlTh1Fx8",
-  authDomain: firebaseAppletConfig.authDomain || "aspect-rp-485622.firebaseapp.com",
-  projectId: firebaseAppletConfig.projectId || "aspect-rp-485622",
-  storageBucket: firebaseAppletConfig.storageBucket || "aspect-rp-485622.firebasestorage.app",
-  messagingSenderId: firebaseAppletConfig.messagingSenderId || "210129271765",
-  appId: firebaseAppletConfig.appId || "1:210129271765:web:9f7d7486766d7627179b5c"
+  apiKey: "AIzaSyB1cNyANrsKZZIYw_eGRBt7Z0NPUNTSLcM",
+  authDomain: "fir-50300.firebaseapp.com",
+  projectId: "fir-50300",
+  storageBucket: "fir-50300.firebasestorage.app",
+  messagingSenderId: "538511193051",
+  appId: "1:538511193051:web:e305bd85a0c87cdeea2dfe",
+  measurementId: "G-H66KMZVC72"
 };
 
 export const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
