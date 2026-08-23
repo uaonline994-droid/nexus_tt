@@ -3,42 +3,25 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Safety Net: Default-deny all unspecified document routes
-    match /{document=**} {
-      allow read, write: if false;
-    }
-
-    // Zero-Trust Security Helpers
     function isSignedIn() {
       return request.auth != null;
     }
 
     function isAdmin() {
-      return isSignedIn() &&
-        request.auth.token.email == 'a60840397@gmail.com' &&
-        request.auth.token.email_verified == true;
+      return isSignedIn() && request.auth.token.email != null &&
+        request.auth.token.email.lower() == 'a60840397@gmail.com';
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function isValidBioProfile(data) {
-      return data.displayName is string && data.displayName.size() <= 60 &&
-        data.handle is string && data.handle.size() <= 40 &&
-        (!('bioText' in data) || (data.bioText is string && data.bioText.size() <= 600)) &&
-        (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 500)) &&
-        (!('promoCode' in data) || (data.promoCode is string && data.promoCode.size() <= 40)) &&
-        (!('links' in data) || (data.links is list && data.links.size() <= 30)) &&
-        (!('news' in data) || (data.news is list && data.news.size() <= 50));
-    }
-
-    // NEXUS Profile Document (Publicly readable, writable strictly by verified admin)
+    // Publicly readable bio profile, writable by authenticated admin
     match /nexus_profile/{profileId} {
-      allow get: if isValidId(profileId);
-      allow list: if false;
-      allow create, update: if isAdmin() && isValidId(profileId) && isValidBioProfile(request.resource.data);
-      allow delete: if isAdmin() && isValidId(profileId);
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Global default-deny safety rule
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
+
