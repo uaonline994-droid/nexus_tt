@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { 
   User as UserIcon, 
   ShieldCheck, 
@@ -14,7 +14,7 @@ import {
   Zap, 
   LogOut, 
   Sliders,
-  X
+  Loader2
 } from 'lucide-react';
 import { ADMIN_EMAIL } from './firebase';
 import { BioProfile, ToastMessage } from './types';
@@ -116,39 +116,29 @@ const DEFAULT_NEXUS_PROFILE: BioProfile = {
 
 export default function App() {
   const [profile, setProfile] = useState<BioProfile>(DEFAULT_NEXUS_PROFILE);
-  const [adminEmail, setAdminEmail] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('nexus_admin_email') || null;
-    } catch {
-      return null;
-    }
-  });
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
-  const [isGoogleModalOpen, setIsGoogleModalOpen] = useState<boolean>(false);
-  const [customEmailInput, setCustomEmailInput] = useState<string>('');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isCopiedShare, setIsCopiedShare] = useState<boolean>(false);
   const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
 
-  const isAdmin = Boolean(adminEmail && adminEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase());
-
   // Toast notification helper
-  const showToast = (text: string, type: 'success' | 'error' | 'info' = 'info') => {
+  const showToast = useCallback((text: string, type: 'success' | 'error' | 'info' = 'info') => {
     const id = 'toast_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
     setToasts((prev) => [...prev, { id, text, type }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4500);
-  };
+  }, []);
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
   // Helper to normalize and update profile state
-  const updateProfileState = (data: Partial<BioProfile>) => {
+  const updateProfileState = useCallback((data: Partial<BioProfile>) => {
     setProfile({
       avatarUrl: data.avatarUrl !== undefined ? data.avatarUrl : DEFAULT_NEXUS_PROFILE.avatarUrl,
       displayName: data.displayName || 'NEXUS',
@@ -164,9 +154,37 @@ export default function App() {
       news: Array.isArray(data.news) ? data.news : DEFAULT_NEXUS_PROFILE.news
     });
     setImageError(false);
-  };
+  }, []);
 
-  // Real-time Database Synchronization (Instant fetch + Server-Sent Events stream)
+  // Check saved session on mount
+  useEffect(() => {
+    const checkSavedSession = async () => {
+      try {
+        const savedToken = localStorage.getItem('nexus_admin_session');
+        if (savedToken) {
+          const res = await fetch('/api/auth/session', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: savedToken })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.isAdmin) {
+              setIsAdmin(true);
+            } else {
+              localStorage.removeItem('nexus_admin_session');
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Session check notice:', e);
+      }
+    };
+
+    checkSavedSession();
+  }, []);
+
+  // Real-time Database Synchronization (Fetch + SSE Event Stream)
   useEffect(() => {
     const fetchLatestProfile = async () => {
       try {
@@ -210,7 +228,7 @@ export default function App() {
       console.warn('SSE connect notice:', e);
     }
 
-    const interval = setInterval(fetchLatestProfile, 6000);
+    const interval = setInterval(fetchLatestProfile, 8000);
 
     return () => {
       if (eventSource) {
@@ -218,60 +236,143 @@ export default function App() {
       }
       clearInterval(interval);
     };
-  }, []);
+  }, [updateProfileState]);
 
-  // Handle Google Login
-  const handleGoogleLogin = () => {
+  // Listen for Google Auth Popup postMessage
+  useEffect(() => {
+    const handleAuthMessage = async (event: MessageEvent) => {
+      if (event.data?.type === 'GOOGLE_AUTH_SUCCESS' && event.data?.email) {
+        setIsAuthLoading(true);
+        try {
+          const verifyRes = await fetch('/api/auth/verify-google', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: event.data.email,
+              token: event.data.token
+            })
+          });
+
+          const authData = await verifyRes.json();
+          if (verifyRes.ok && authData.isAdmin) {
+            setIsAdmin(true);
+            if (authData.token) {
+              localStorage.setItem('nexus_admin_session', authData.token);
+            }
+            setIsAdminOpen(true);
+            showToast('Успішний вхід через Google!', 'success');
+          } else {
+            showToast(authData.error || 'У доступі відмовлено: цей Google акаунт не має прав адміністратора', 'error');
+          }
+        } catch (err: any) {
+          showToast('Помилка перевірки акаунта: ' + (err?.message || ''), 'error');
+        } finally {
+          setIsAuthLoading(false);
+        }
+      } else if (event.data?.type === 'GOOGLE_AUTH_ERROR') {
+        setIsAuthLoading(false);
+        showToast('Помилка авторизації Google: ' + (event.data.error || 'Спробуйте ще раз'), 'error');
+      }
+    };
+
+    window.addEventListener('message', handleAuthMessage);
+    return () => window.removeEventListener('message', handleAuthMessage);
+  }, [showToast]);
+
+  // 1-Click Google Sign In (Direct account selection popup - NO forms, NO exposed emails)
+  const handleGoogleSignInClick = () => {
     if (isAdmin) {
       setIsAdminOpen(true);
       return;
     }
-    setIsGoogleModalOpen(true);
-  };
 
-  // Perform secure server-side login
-  const handleServerLogin = async (targetEmail: string) => {
     setIsAuthLoading(true);
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: targetEmail.trim() })
-      });
 
-      const json = await res.json();
-      if (res.ok && json.success) {
-        setAdminEmail(ADMIN_EMAIL);
-        try {
-          localStorage.setItem('nexus_admin_email', ADMIN_EMAIL);
-          if (json.token) {
-            localStorage.setItem('nexus_admin_token', json.token);
+    // 1. Try Google Identity Services Token Client if available in window
+    if (typeof (window as any).google?.accounts?.oauth2?.initTokenClient === 'function') {
+      try {
+        const client = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: '931281699968-3h16a5d4gve3q62l00flq3sllf35q74c.apps.googleusercontent.com',
+          scope: 'https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile',
+          prompt: 'select_account',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              setIsAuthLoading(false);
+              showToast('Помилка вибору акаунта Google: ' + tokenResponse.error, 'error');
+              return;
+            }
+
+            if (tokenResponse.access_token) {
+              try {
+                const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+                  headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
+                });
+                const userInfo = await userRes.json();
+
+                const verifyRes = await fetch('/api/auth/verify-google', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    email: userInfo.email,
+                    token: tokenResponse.access_token
+                  })
+                });
+
+                const authData = await verifyRes.json();
+                if (verifyRes.ok && authData.isAdmin) {
+                  setIsAdmin(true);
+                  if (authData.token) {
+                    localStorage.setItem('nexus_admin_session', authData.token);
+                  }
+                  setIsAdminOpen(true);
+                  showToast('Успішний вхід через Google!', 'success');
+                } else {
+                  showToast(authData.error || 'У доступі відмовлено: цей Google акаунт не має прав адміністратора', 'error');
+                }
+              } catch (err: any) {
+                showToast('Помилка перевірки: ' + (err?.message || ''), 'error');
+              } finally {
+                setIsAuthLoading(false);
+              }
+            }
           }
-        } catch (e) {}
-        setIsGoogleModalOpen(false);
-        setIsAdminOpen(true);
-        showToast('Успішний Google Вхід! Ви увійшли як ' + ADMIN_EMAIL, 'success');
-      } else {
-        showToast(json.error || `Помилка: доступ дозволено лише для ${ADMIN_EMAIL}`, 'error');
+        });
+
+        client.requestAccessToken();
+        return;
+      } catch (err) {
+        console.warn('GSI init notice, using direct popup flow:', err);
       }
-    } catch (err: any) {
-      console.error('Auth request error:', err);
-      showToast('Помилка сервера при авторизації: ' + (err?.message || ''), 'error');
-    } finally {
+    }
+
+    // 2. Direct Official Google Account Selection Popup Flow
+    const clientId = '931281699968-3h16a5d4gve3q62l00flq3sllf35q74c.apps.googleusercontent.com';
+    const redirectUri = `${window.location.origin}/auth/callback`;
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=token&scope=email%20profile&prompt=select_account`;
+
+    const width = 500;
+    const height = 620;
+    const left = window.screenX + (window.outerWidth - width) / 2;
+    const top = window.screenY + (window.outerHeight - height) / 2;
+
+    const popup = window.open(
+      googleAuthUrl,
+      'GoogleSignIn',
+      `width=${width},height=${height},left=${left},top=${top},status=no,resizable=yes`
+    );
+
+    if (!popup) {
       setIsAuthLoading(false);
+      showToast('Будь ласка, дозвольте спливаючі вікна (popups) у браузері для вибору Google акаунта.', 'error');
     }
   };
 
+  // Logout handler
   const handleLogout = () => {
-    try {
-      localStorage.removeItem('nexus_admin_email');
-      localStorage.removeItem('nexus_admin_token');
-      setAdminEmail(null);
-      setIsAdminOpen(false);
-      showToast('Ви вийшли з акаунта адміністратора', 'info');
-    } catch (err) {
-      console.error('Logout error:', err);
-    }
+    localStorage.removeItem('nexus_admin_session');
+    setIsAdmin(false);
+    setIsAdminOpen(false);
+    showToast('Ви успішно вийшли з акаунта адміністратора', 'info');
   };
 
   // Save profile changes to the Server Database
@@ -292,7 +393,7 @@ export default function App() {
         updateProfileState(json.profile);
       }
 
-      showToast('Всі зміни успішно збережено в базі даних та оновлено для всіх відвідувачів!', 'success');
+      showToast('Всі зміни збережено в базі даних та оновлено для всіх відвідувачів!', 'success');
     } catch (err: any) {
       console.error('Database save error:', err);
       showToast('Помилка збереження даних: ' + (err?.message || 'Невідома помилка'), 'error');
@@ -333,13 +434,18 @@ export default function App() {
           <div className="flex items-center gap-2">
             {!isAdmin ? (
               <button
-                onClick={handleGoogleLogin}
+                onClick={handleGoogleSignInClick}
+                disabled={isAuthLoading}
                 id="google-login-button"
-                className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#2d3748] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer"
-                title="Google Вхід для адміністратора (a60840397@gmail.com)"
+                className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#2d3748] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer disabled:opacity-60"
+                title="Оберіть свій Google акаунт для входу"
               >
-                <GoogleIcon />
-                <span>Гугл Вхід</span>
+                {isAuthLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                ) : (
+                  <GoogleIcon />
+                )}
+                <span>{isAuthLoading ? 'Вхід...' : 'Гугл Вхід'}</span>
               </button>
             ) : (
               <>
@@ -452,14 +558,14 @@ export default function App() {
           <LinksList links={profile.links} />
         </div>
 
-        {/* Admin Bar or Google Login Notice */}
+        {/* Bottom Admin Bar or Google Login */}
         <div className="mt-4 pt-3 w-full flex flex-col items-center justify-center select-none border-t border-[#bec4cf]/30">
           {isAdmin ? (
             <div className="w-full flex items-center justify-between px-3 py-2 rounded-2xl bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff]">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-blue-600" />
                 <span className="text-[11px] font-bold text-[#2d3748]">
-                  Адміністратор ({ADMIN_EMAIL})
+                  Режим Адміністратора
                 </span>
               </div>
               <button
@@ -471,11 +577,16 @@ export default function App() {
             </div>
           ) : (
             <button
-              onClick={handleGoogleLogin}
-              className="w-full py-2.5 px-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#2d3748] hover:text-blue-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer"
+              onClick={handleGoogleSignInClick}
+              disabled={isAuthLoading}
+              className="w-full py-2.5 px-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#2d3748] hover:text-blue-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer disabled:opacity-60"
             >
-              <GoogleIcon />
-              <span>Увійти через Google для редагування</span>
+              {isAuthLoading ? (
+                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+              ) : (
+                <GoogleIcon />
+              )}
+              <span>{isAuthLoading ? 'Підключення Google...' : 'Увійти через Google для редагування'}</span>
             </button>
           )}
 
@@ -495,81 +606,6 @@ export default function App() {
           onLogout={handleLogout}
           adminEmail={ADMIN_EMAIL}
         />
-      )}
-
-      {/* Google Sign In Direct Modal */}
-      {isGoogleModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-[#e0e5ec] rounded-[32px] shadow-[20px_20px_60px_#bec4cf,-20px_-20px_60px_#ffffff] p-6 sm:p-7 border border-white/60 relative">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-[#bec4cf]/40">
-              <div className="flex items-center gap-2">
-                <GoogleIcon />
-                <h2 className="text-base font-black text-[#2d3748]">
-                  Вхід через Google
-                </h2>
-              </div>
-              <button
-                onClick={() => setIsGoogleModalOpen(false)}
-                className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[3px_3px_6px_#bec4cf,-3px_-3px_6px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#64748b] hover:text-[#2d3748] flex items-center justify-center transition-all cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs text-[#64748b] mb-4 leading-relaxed">
-              Оберіть ваш Google акаунт для входу в панель керування <b>NEXUS</b>:
-            </p>
-
-            {/* Quick 1-Click Button for Admin */}
-            <button
-              onClick={() => handleServerLogin(ADMIN_EMAIL)}
-              disabled={isAuthLoading}
-              className="w-full py-3 px-4 rounded-2xl bg-white text-[#1f2937] hover:bg-gray-50 active:scale-98 shadow-[4px_4px_10px_#bec4cf,-4px_-4px_10px_#ffffff] font-bold text-xs flex items-center justify-center gap-2.5 transition-all cursor-pointer mb-3 border border-gray-200 disabled:opacity-50"
-            >
-              <GoogleIcon />
-              <span>{isAuthLoading ? 'Перевірка...' : `Увійти як ${ADMIN_EMAIL}`}</span>
-            </button>
-
-            {/* Custom Google Email Input Form */}
-            <div className="relative my-4">
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-[#bec4cf]/50"></div>
-              </div>
-              <div className="relative flex justify-center text-[10px] uppercase">
-                <span className="bg-[#e0e5ec] px-2 text-[#94a3b8] font-bold">або інший Google email</span>
-              </div>
-            </div>
-
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (customEmailInput.trim()) {
-                  handleServerLogin(customEmailInput.trim());
-                }
-              }}
-              className="flex gap-2"
-            >
-              <input
-                type="email"
-                placeholder="ваш_email@gmail.com"
-                value={customEmailInput}
-                onChange={(e) => setCustomEmailInput(e.target.value)}
-                className="w-full py-2 px-3 rounded-xl bg-[#e0e5ec] shadow-[inset_3px_3px_6px_#bec4cf,inset_-3px_-3px_6px_#ffffff] text-[#2d3748] placeholder-[#94a3b8] text-xs font-semibold focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <button
-                type="submit"
-                disabled={isAuthLoading || !customEmailInput.trim()}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shrink-0 shadow-[3px_3px_6px_#bec4cf] flex items-center gap-1 transition-all disabled:opacity-50 cursor-pointer"
-              >
-                <span>Вхід</span>
-              </button>
-            </form>
-
-            <div className="mt-4 text-[10px] text-[#94a3b8] text-center font-medium">
-              Безпечна авторизація: всі секретні ключі та база захищені на сервері
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

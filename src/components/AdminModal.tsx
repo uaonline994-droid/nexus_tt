@@ -260,8 +260,8 @@ export const AdminModal: React.FC<AdminModalProps> = ({
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></span>
               NEXUS Admin Panel
             </h2>
-            <span className="hidden sm:inline-block text-[10px] text-[#64748b] bg-white/60 px-2.5 py-1 rounded-md shadow-inner font-mono font-medium">
-              {adminEmail}
+            <span className="hidden sm:inline-block text-[10px] text-blue-600 bg-blue-500/10 px-2.5 py-1 rounded-md font-bold uppercase tracking-wider">
+              Адміністратор
             </span>
           </div>
           

@@ -185,25 +185,100 @@ app.get('/api/profile/events', (req, res) => {
   });
 });
 
-// 4. Server-Side Admin Authentication (No client SDK leakage)
-app.post('/api/auth/login', (req, res) => {
-  const { email } = req.body;
-  if (email && email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim()) {
-    // Generate secure session identifier
-    const sessionToken = 'nexus_session_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 10);
-    res.json({ 
+// 4. Server-Side Google OAuth verification
+app.post('/api/auth/verify-google', (req, res) => {
+  const { email, token } = req.body;
+  if (!email) {
+    return res.status(400).json({ success: false, error: 'Відсутній Google Email' });
+  }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+  const targetAdmin = ADMIN_EMAIL.trim().toLowerCase();
+
+  if (cleanEmail === targetAdmin) {
+    const sessionToken = 'nexus_session_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 12);
+    return res.json({ 
       success: true, 
       isAdmin: true, 
-      email: ADMIN_EMAIL,
-      token: sessionToken
+      token: sessionToken 
     });
   } else {
-    res.status(403).json({ 
+    return res.status(403).json({ 
       success: false, 
       isAdmin: false, 
-      error: `Доступ дозволено лише для ${ADMIN_EMAIL}` 
+      error: 'У доступі відмовлено: цей Google акаунт не має прав адміністратора.' 
     });
   }
+});
+
+// 5. Verify existing session token
+app.post('/api/auth/session', (req, res) => {
+  const { token } = req.body;
+  if (token && typeof token === 'string' && token.startsWith('nexus_session_')) {
+    return res.json({ success: true, isAdmin: true });
+  }
+  return res.json({ success: false, isAdmin: false });
+});
+
+// 6. OAuth callback endpoint for Google popup
+app.get(['/auth/callback', '/auth/callback/'], (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Google Authentication</title>
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #e0e5ec; color: #2d3748; }
+          .card { padding: 24px; border-radius: 20px; background: #e0e5ec; box-shadow: 10px 10px 20px #bec4cf, -10px -10px 20px #ffffff; text-align: center; max-width: 320px; }
+          .spinner { width: 32px; height: 32px; border: 3px solid #bec4cf; border-top-color: #3b82f6; border-radius: 50%; animation: spin 1s infinite linear; margin: 0 auto 12px; }
+          @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="spinner"></div>
+          <div style="font-size: 14px; font-weight: bold;">Перевірка акаунта Google...</div>
+        </div>
+        <script>
+          const hash = window.location.hash.substring(1);
+          const params = new URLSearchParams(hash);
+          const accessToken = params.get('access_token');
+          if (accessToken) {
+            fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: 'Bearer ' + accessToken }
+            })
+            .then(r => r.json())
+            .then(user => {
+              if (window.opener) {
+                window.opener.postMessage({ 
+                  type: 'GOOGLE_AUTH_SUCCESS', 
+                  token: accessToken, 
+                  email: user.email, 
+                  name: user.name, 
+                  picture: user.picture 
+                }, '*');
+                window.close();
+              } else {
+                window.location.href = '/';
+              }
+            })
+            .catch(err => {
+              if (window.opener) {
+                window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: err.message }, '*');
+                window.close();
+              }
+            });
+          } else {
+            if (window.opener) {
+              window.opener.postMessage({ type: 'GOOGLE_AUTH_ERROR', error: 'No token returned' }, '*');
+              window.close();
+            }
+          }
+        </script>
+      </body>
+    </html>
+  `);
 });
 
 async function startServer() {
