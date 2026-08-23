@@ -2,106 +2,103 @@
 
 @layer base {
   :root {
-    --nm-bg: #e0e5ec;
-    --nm-shadow-light: #ffffff;
-    --nm-shadow-dark: #bec4cf;
-    --nm-shadow-darker: #a3b1c6;
-    --nm-text-main: #2d3748;
-    --nm-text-muted: #64748b;
-    --nm-text-subtle: #94a3b8;
-    --accent-nexus: #3b82f6;
-    --accent-nexus-glow: rgba(59, 130, 246, 0.4);
+    --bg-base: #f0f4f9;
+    --text-primary: #1e293b;
+    --text-secondary: #64748b;
+    --text-muted: #94a3b8;
+    --accent-blue: #3b82f6;
+    --accent-indigo: #6366f1;
+    --accent-rose: #f43f5e;
+    --accent-emerald: #10b981;
+    --accent-amber: #f59e0b;
   }
 
   body {
-    background-color: #e0e5ec;
-    color: #2d3748;
+    background-color: #f0f4f9;
+    color: #1e293b;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
     user-select: none;
     -webkit-tap-highlight-color: transparent;
+    overflow-x: hidden;
   }
 }
 
-/* Professional Polish & Futuristic Neumorphism Classes */
-.nm-card-outer {
-  background: #e0e5ec;
-  box-shadow: 20px 20px 60px #bec4cf, -20px -20px 60px #ffffff;
+/* Frosted Ice Glassmorphism Styles */
+.frosted-main-card {
+  background: rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow: 
+    0 20px 40px -15px rgba(15, 23, 42, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset;
 }
 
-.nm-flat {
-  background: #e0e5ec;
-  box-shadow: 8px 8px 16px #bec4cf, -8px -8px 16px #ffffff;
+.frosted-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.04);
 }
 
-.nm-flat-sm {
-  background: #e0e5ec;
-  box-shadow: 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+.frosted-pill {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.75);
 }
 
-.nm-flat-xs {
-  background: #e0e5ec;
-  box-shadow: 3px 3px 6px #bec4cf, -3px -3px 6px #ffffff;
+.frosted-inset {
+  background: rgba(241, 245, 249, 0.65);
+  border: 1px solid rgba(226, 232, 240, 0.8);
 }
 
-.nm-inset {
-  background: #e0e5ec;
-  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff;
-}
-
-.nm-inset-sm {
-  background: #e0e5ec;
-  box-shadow: inset 2px 2px 5px #bec4cf, inset -2px -2px 5px #ffffff;
-}
-
-.nm-avatar-inset {
-  background: #e0e5ec;
-  box-shadow: inset 10px 10px 20px #bec4cf, inset -10px -10px 20px #ffffff;
-}
-
-.nm-avatar-outer {
-  background: #e0e5ec;
-  box-shadow: 10px 10px 24px #bec4cf, -10px -10px 24px #ffffff;
-}
-
-.nm-button {
-  background: #e0e5ec;
-  box-shadow: 8px 8px 16px #bec4cf, -8px -8px 16px #ffffff;
+.frosted-button {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 8px -1px rgba(15, 23, 42, 0.05);
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.nm-button:hover {
-  box-shadow: 4px 4px 10px #bec4cf, -4px -4px 10px #ffffff;
+.frosted-button:hover {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: rgba(99, 102, 241, 0.3);
+  box-shadow: 0 6px 16px -2px rgba(99, 102, 241, 0.12);
   transform: translateY(-1px);
 }
 
-.nm-button:active, .nm-button-active {
-  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff !important;
+.frosted-button:active {
   transform: translateY(1px) scale(0.99);
 }
 
-.nm-input {
-  background: #e0e5ec;
-  box-shadow: inset 4px 4px 8px #bec4cf, inset -4px -4px 8px #ffffff;
-  outline: none;
-  transition: all 0.2s ease;
-}
-
-.nm-input:focus {
-  box-shadow: inset 5px 5px 10px #afb6c2, inset -5px -5px 10px #ffffff;
-}
-
-/* Glowing Promo badge animation */
-@keyframes pulse-glow {
+/* Ambient glow animations */
+@keyframes float-slow {
   0%, 100% {
-    box-shadow: 0 0 15px rgba(59, 130, 246, 0.3), 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+    transform: translateY(0px) scale(1);
   }
   50% {
-    box-shadow: 0 0 25px rgba(59, 130, 246, 0.6), 6px 6px 12px #bec4cf, -6px -6px 12px #ffffff;
+    transform: translateY(-15px) scale(1.05);
   }
 }
 
-.promo-glow {
-  animation: pulse-glow 3s infinite ease-in-out;
+.animate-float-slow {
+  animation: float-slow 8s ease-in-out infinite;
+}
+
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 4s ease-in-out infinite;
 }
 
 /* Custom smooth scrollbar */
@@ -111,14 +108,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #e0e5ec;
+  background: rgba(241, 245, 249, 0.5);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #bec4cf;
-  border-radius: 4px;
+  background: #cbd5e1;
+  border-radius: 6px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a3b1c6;
+  background: #94a3b8;
 }

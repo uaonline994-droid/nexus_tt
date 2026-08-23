@@ -1,6 +1,7 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, type User } from "firebase/auth";
 import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
+import { getDatabase, ref, set as rtdbSet, get as rtdbGet, onValue as rtdbOnValue } from "firebase/database";
 import firebaseAppletConfig from "../firebase-applet-config.json";
 
 export const ADMIN_EMAIL = "a60840397@gmail.com";
@@ -8,6 +9,7 @@ export const ADMIN_EMAIL = "a60840397@gmail.com";
 export const firebaseConfig = {
   apiKey: "AIzaSyB1cNyANrsKZZIYw_eGRBt7Z0NPUNTSLcM",
   authDomain: "fir-50300.firebaseapp.com",
+  databaseURL: "https://fir-50300-default-rtdb.firebaseio.com",
   projectId: "fir-50300",
   storageBucket: "fir-50300.firebasestorage.app",
   messagingSenderId: "538511193051",
@@ -20,6 +22,21 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 export const db = getFirestore(app);
+export const rtdb = getDatabase(app);
 
-export { signInWithPopup, signOut, onAuthStateChanged, doc, setDoc, getDoc, onSnapshot, type User };
+export { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot, 
+  getDatabase, 
+  ref, 
+  rtdbSet, 
+  rtdbGet, 
+  rtdbOnValue, 
+  type User 
+};
 

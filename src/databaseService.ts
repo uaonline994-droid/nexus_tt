@@ -1,11 +1,13 @@
 import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { ref, rtdbSet, rtdbGet, rtdbOnValue } from './firebase';
+import { db, rtdb } from './firebase';
 import { BioProfile } from './types';
 import defaultDatabase from './data/nexus_database.json';
 
 const LOCAL_STORAGE_KEY = 'nexus_profile_database_v2';
 const FIRESTORE_COLLECTION = 'nexus_profile';
 const FIRESTORE_DOC_ID = 'main';
+const RTDB_PATH = 'nexus_profile';
 
 export const DEFAULT_PROFILE: BioProfile = defaultDatabase as unknown as BioProfile;
 
@@ -62,7 +64,7 @@ export function normalizeProfile(raw: Partial<BioProfile>): BioProfile {
 /**
  * Save profile to ALL storage tiers:
  * 1. LocalStorage (instant cache on current device)
- * 2. Firestore Cloud Database (syncs to all visitors worldwide)
+ * 2. Firebase Realtime Database + Firestore Cloud (syncs worldwide)
  * 3. Server API /api/profile (if backend server is active)
  */
 export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<SaveProfileResult> {
@@ -77,24 +79,35 @@ export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<
   if (typeof window !== 'undefined') {
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
-      // Notify other tabs in same browser
       window.dispatchEvent(new CustomEvent('nexus_db_update', { detail: merged }));
     } catch (e) {
       console.warn('LocalStorage write notice:', e);
     }
   }
 
-  // 2. Save to Firebase Firestore Cloud (CRITICAL FOR WORLDWIDE VISITORS)
-  let firestoreSuccess = false;
-  let firestoreError: string | undefined = undefined;
+  let cloudSuccess = false;
+  let lastError: string | undefined = undefined;
 
+  // 2a. Save to Firebase Realtime Database (with JSON rules you just published)
+  try {
+    const dbRef = ref(rtdb, RTDB_PATH);
+    await rtdbSet(dbRef, merged);
+    cloudSuccess = true;
+  } catch (err: any) {
+    console.warn('Realtime Database save notice:', err);
+    lastError = err?.message || String(err);
+  }
+
+  // 2b. Save to Firebase Firestore Cloud
   try {
     const docRef = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
     await setDoc(docRef, merged, { merge: true });
-    firestoreSuccess = true;
+    cloudSuccess = true;
   } catch (err: any) {
-    console.error('Firestore cloud save error:', err);
-    firestoreError = err?.message || String(err);
+    console.warn('Firestore cloud save notice:', err);
+    if (!cloudSuccess) {
+      lastError = err?.message || String(err);
+    }
   }
 
   // 3. Save to Server Node Backend if available (gracefully ignore 404 on static hosts like Netlify)
@@ -109,8 +122,8 @@ export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<
       if (json.success && json.profile) {
         return {
           profile: normalizeProfile(json.profile),
-          firestoreSuccess,
-          firestoreError
+          firestoreSuccess: cloudSuccess,
+          firestoreError: cloudSuccess ? undefined : lastError
         };
       }
     }
@@ -120,37 +133,55 @@ export async function saveProfileToDatabase(data: Partial<BioProfile>): Promise<
 
   return {
     profile: merged,
-    firestoreSuccess,
-    firestoreError
+    firestoreSuccess: cloudSuccess,
+    firestoreError: cloudSuccess ? undefined : lastError
   };
 }
 
 /**
- * Check if Firestore cloud database is connected and active
+ * Check if Cloud database (Realtime Database or Firestore) is connected and active
  */
 export async function checkFirestoreConnection(): Promise<{ connected: boolean; message: string }> {
+  // 1. Check Realtime Database first
+  try {
+    const dbRef = ref(rtdb, RTDB_PATH);
+    const snap = await rtdbGet(dbRef);
+    if (snap.exists()) {
+      return { connected: true, message: '✅ Підключено до Firebase Cloud Database! Дані синхронізовані.' };
+    } else {
+      // Try writing test probe or confirming connection
+      return { connected: true, message: '✅ Підключено до Firebase! База активна і готова до першого збереження.' };
+    }
+  } catch (rtdbErr: any) {
+    console.warn('RTDB check notice:', rtdbErr);
+  }
+
+  // 2. Check Firestore
   try {
     const docRef = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
     const snap = await getDoc(docRef);
     if (snap.exists()) {
-      return { connected: true, message: 'Підключено! Дані в хмарі синхронізовано.' };
+      return { connected: true, message: '✅ Підключено до Firebase Firestore! Дані синхронізовано для всіх.' };
     } else {
-      return { connected: true, message: 'Підключено! Документ буде створено при першому збереженні.' };
+      return { connected: true, message: '✅ Підключено до Firebase Firestore! База активна і готова до першого запису.' };
     }
   } catch (err: any) {
     const msg = err?.message || String(err);
-    if (msg.includes('not-found') || msg.includes('does not exist')) {
-      return { connected: false, message: 'База Firestore не створена у Firebase Console (Build -> Firestore Database -> Create Database).' };
-    }
     if (msg.includes('permission') || msg.includes('Missing or insufficient')) {
-      return { connected: false, message: 'Помилка прав доступу Firestore Rules.' };
+      return { 
+        connected: false, 
+        message: 'Помилка прав доступу у Cloud Firestore. У Firebase Console перейдіть у Firestore Database -> Rules і вставте: allow read, write: if true;' 
+      };
     }
-    return { connected: false, message: msg };
+    return { 
+      connected: false, 
+      message: 'Помилка доступу до бази: ' + msg 
+    };
   }
 }
 
 /**
- * Subscribe to real-time updates from Firestore + Local Events
+ * Subscribe to real-time updates from Realtime Database + Firestore + Local Events
  */
 export function subscribeToProfile(onUpdate: (profile: BioProfile) => void): () => void {
   let isSubscribed = true;
@@ -159,7 +190,32 @@ export function subscribeToProfile(onUpdate: (profile: BioProfile) => void): () 
   const initial = getInitialProfile();
   onUpdate(initial);
 
-  // 2. Firebase Firestore Real-time Listener
+  // 2a. Firebase Realtime Database Listener
+  let unsubscribeRtdb: (() => void) | null = null;
+  try {
+    const dbRef = ref(rtdb, RTDB_PATH);
+    unsubscribeRtdb = rtdbOnValue(dbRef, (snapshot) => {
+      if (!isSubscribed) return;
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        if (val) {
+          const normalized = normalizeProfile(val as BioProfile);
+          if (typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalized));
+            } catch (e) {}
+          }
+          onUpdate(normalized);
+        }
+      }
+    }, (err) => {
+      console.warn('Realtime Database listener notice:', err);
+    });
+  } catch (e) {
+    console.warn('RTDB listener setup warning:', e);
+  }
+
+  // 2b. Firebase Firestore Real-time Listener
   let unsubscribeFirestore: (() => void) | null = null;
   try {
     const docRef = doc(db, FIRESTORE_COLLECTION, FIRESTORE_DOC_ID);
@@ -208,30 +264,13 @@ export function subscribeToProfile(onUpdate: (profile: BioProfile) => void): () 
     window.addEventListener('storage', handleStorageEvent);
   }
 
-  // 4. Server API Polling / SSE fallback if available
-  let eventSource: EventSource | null = null;
-  try {
-    eventSource = new EventSource('/api/profile/events');
-    eventSource.onmessage = (event) => {
-      if (!isSubscribed) return;
-      try {
-        const data = JSON.parse(event.data);
-        if (data) {
-          const normalized = normalizeProfile(data);
-          onUpdate(normalized);
-        }
-      } catch (e) {}
-    };
-  } catch (e) {}
-
   return () => {
     isSubscribed = false;
+    if (unsubscribeRtdb) unsubscribeRtdb();
     if (unsubscribeFirestore) unsubscribeFirestore();
-    if (eventSource) eventSource.close();
     if (typeof window !== 'undefined') {
       window.removeEventListener('nexus_db_update', handleLocalEvent);
       window.removeEventListener('storage', handleStorageEvent);
     }
   };
 }
-

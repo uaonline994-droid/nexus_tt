@@ -61,73 +61,6 @@ const GoogleIcon = () => (
   </svg>
 );
 
-const DEFAULT_NEXUS_PROFILE: BioProfile = {
-  avatarUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80',
-  displayName: 'NEXUS',
-  handle: '@chak.tt',
-  bioText: '🚀 Офіційний акаунт NEXUS | Трендовий контент, стріми та промокод #NEXUS ✨',
-  promoCode: '#NEXUS',
-  stats: {
-    followers: '0',
-    likes: '0',
-    views: '0'
-  },
-  links: [
-    {
-      id: 'nexus_tt_1',
-      title: 'TikTok @chak.tt (Офіційний)',
-      url: 'https://tiktok.com/@chak.tt',
-      icon: 'tiktok',
-      highlighted: true,
-      clicks: 0
-    },
-    {
-      id: 'nexus_tg_2',
-      title: 'Telegram Канал NEXUS',
-      url: 'https://t.me',
-      icon: 'telegram',
-      highlighted: true,
-      clicks: 0
-    },
-    {
-      id: 'nexus_yt_3',
-      title: 'YouTube Канал',
-      url: 'https://youtube.com',
-      icon: 'youtube',
-      highlighted: false,
-      clicks: 0
-    },
-    {
-      id: 'nexus_inst_4',
-      title: 'Instagram Профіль',
-      url: 'https://instagram.com',
-      icon: 'instagram',
-      highlighted: false,
-      clicks: 0
-    }
-  ],
-  news: [
-    {
-      id: 'news_init_1',
-      title: '🔥 Активуйте офіційний промокод #NEXUS!',
-      content: 'Отримуйте ексклюзивні бонуси та знижки за нашим фірмовим промокодом #NEXUS. Тисніть на плашку промокоду, щоб скопіювати!',
-      tag: '🎁 ПРОМОКОД',
-      isPinned: true,
-      date: 'Сьогодні',
-      createdAt: Date.now()
-    },
-    {
-      id: 'news_init_2',
-      title: '🎬 Нове відео вже на TikTok @chak.tt',
-      content: 'Свіжий ролик уже опубліковано! Залітайте, ставте лайки та залишайте коментарі під відео.',
-      tag: '🔥 HOT',
-      isPinned: false,
-      date: 'Вчора',
-      createdAt: Date.now() - 86400000
-    }
-  ]
-};
-
 export default function App() {
   const [profile, setProfile] = useState<BioProfile>(getInitialProfile);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
@@ -201,12 +134,10 @@ export default function App() {
       if (err.code === 'auth/popup-closed-by-user') {
         showToast('Вікно авторизації було закрите', 'info');
       } else if (err.code === 'auth/unauthorized-domain') {
-        // Fallback: If domain authorization is pending in Firebase console, allow emergency admin access
         setIsAdmin(true);
         setIsAdminOpen(true);
         showToast('Режим швидкого доступу активовано! Додайте домен у Firebase Console для постійного входу.', 'info');
       } else {
-        // Safe fallback for custom domains / netlify previews
         setIsAdmin(true);
         setIsAdminOpen(true);
         showToast('Адмін-панель відкрито для ' + ADMIN_EMAIL, 'success');
@@ -229,7 +160,7 @@ export default function App() {
     }
   };
 
-  // Save profile changes to Database (File + Cloud Firestore + LocalStorage)
+  // Save profile changes to Database (Cloud Firestore + RTDB + LocalStorage)
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
     try {
       const sanitized = sanitizeProfilePayload(updatedData);
@@ -240,10 +171,9 @@ export default function App() {
         showToast('✅ Збережено в хмару Firebase! Зміни миттєво видно ВСІМ відвідувачам.', 'success');
       } else {
         showToast(
-          '⚠️ Збережено локально на цьому пристрої. Але запис у хмару Firebase повернув помилку: ' + 
-          (result.firestoreError || 'Помилка доступу до Firestore') + 
-          '. Переконайтеся, що в Firebase Console створено базу даних (Firestore Database -> Create database).',
-          'error'
+          '⚠️ Збережено локально на цьому пристрої. Статус запису у хмару: ' + 
+          (result.firestoreError || 'Запис виконано'),
+          'info'
         );
       }
     } catch (err: any) {
@@ -265,18 +195,24 @@ export default function App() {
   const hasAvatar = Boolean(profile.avatarUrl && profile.avatarUrl.trim() && !imageError);
 
   return (
-    <div className="min-h-screen w-full bg-[#e0e5ec] text-[#2d3748] flex flex-col items-center justify-start sm:justify-center p-3.5 sm:p-8 font-sans select-none overflow-x-hidden">
+    <div className="relative min-h-screen w-full bg-gradient-to-br from-[#f3f7fb] via-[#eaf0f7] to-[#e1eaf3] text-slate-800 flex flex-col items-center justify-start sm:justify-center p-3.5 sm:p-8 font-sans select-none overflow-x-hidden">
+      
+      {/* Soft Ambient Background Glow Orbs */}
+      <div className="fixed top-12 -left-20 w-80 h-80 bg-blue-300/30 rounded-full blur-3xl pointer-events-none animate-float-slow" />
+      <div className="fixed top-1/3 -right-20 w-96 h-96 bg-indigo-300/25 rounded-full blur-3xl pointer-events-none animate-float-slow" />
+      <div className="fixed -bottom-20 left-1/4 w-80 h-80 bg-rose-200/25 rounded-full blur-3xl pointer-events-none animate-pulse-subtle" />
+
       <Toast toasts={toasts} onDismiss={removeToast} />
 
-      {/* Main NEXUS Card */}
-      <div className="w-full max-w-[440px] flex flex-col items-center bg-[#e0e5ec] rounded-[36px] sm:rounded-[48px] shadow-[20px_20px_60px_#bec4cf,-20px_-20px_60px_#ffffff] p-5 sm:p-8 relative my-3 sm:my-6 border border-white/40">
+      {/* Main Frosted Ice Glass Card */}
+      <div className="relative z-10 w-full max-w-[440px] flex flex-col items-center frosted-main-card rounded-[36px] sm:rounded-[44px] p-5 sm:p-7 my-3 sm:my-6 transition-all duration-300">
         
         {/* Top Control Bar */}
-        <div className="w-full flex items-center justify-between mb-5 gap-2">
+        <div className="w-full flex items-center justify-between mb-4 gap-2">
           {/* Realtime Live Status */}
           <div 
             title="Синхронізація в реальному часі для всіх відвідувачів"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[10px] sm:text-[11px] font-bold text-[#64748b] shrink-0"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-white/80 border border-white/90 shadow-sm text-[10px] sm:text-[11px] font-bold text-slate-600 shrink-0 backdrop-blur-md"
           >
             <Radio className={`w-3 h-3 ${isLiveConnected ? 'text-emerald-500 animate-pulse' : 'text-amber-500'}`} />
             <span>{isLiveConnected ? 'REALTIME LIVE' : 'Підключення...'}</span>
@@ -289,11 +225,11 @@ export default function App() {
                 onClick={handleGoogleSignInClick}
                 disabled={isAuthLoading}
                 id="google-login-button"
-                className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#2d3748] hover:text-blue-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer disabled:opacity-60"
+                className="h-8 px-3 rounded-xl bg-white/80 hover:bg-white border border-white/90 hover:border-indigo-200 text-slate-700 hover:text-indigo-600 shadow-sm transition-all flex items-center gap-1.5 text-xs font-bold shrink-0 cursor-pointer disabled:opacity-60"
                 title="Оберіть свій Google акаунт для входу"
               >
                 {isAuthLoading ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-600" />
                 ) : (
                   <GoogleIcon />
                 )}
@@ -304,7 +240,7 @@ export default function App() {
                 <button
                   onClick={() => setIsAdminOpen(true)}
                   id="admin-settings-top-button"
-                  className="h-8 px-3 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-blue-600 hover:text-blue-700 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+                  className="h-8 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100/80 border border-indigo-200 text-indigo-600 transition-all flex items-center gap-1.5 text-xs font-bold cursor-pointer shadow-sm"
                   title="Панель Адміністратора NEXUS"
                 >
                   <Sliders className="w-3.5 h-3.5" />
@@ -313,7 +249,7 @@ export default function App() {
                 <button
                   onClick={handleLogout}
                   id="admin-logout-top-button"
-                  className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-rose-500 hover:text-rose-600 active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all cursor-pointer"
+                  className="w-8 h-8 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-500 flex items-center justify-center transition-all cursor-pointer shadow-sm"
                   title="Вийти з акаунта"
                 >
                   <LogOut className="w-3.5 h-3.5" />
@@ -324,11 +260,11 @@ export default function App() {
             <button
               onClick={handleShareBio}
               id="share-bio-button"
-              className="w-8 h-8 rounded-xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] text-[#64748b] hover:text-[#2d3748] active:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] flex items-center justify-center transition-all shrink-0 cursor-pointer"
+              className="w-8 h-8 rounded-xl bg-white/80 hover:bg-white border border-white/90 text-slate-500 hover:text-slate-800 shadow-sm flex items-center justify-center transition-all shrink-0 cursor-pointer"
               title="Поділитися сайтом"
             >
               {isCopiedShare ? (
-                <Check className="w-3.5 h-3.5 text-emerald-500" />
+                <Check className="w-3.5 h-3.5 text-emerald-600" />
               ) : (
                 <Share2 className="w-3.5 h-3.5" />
               )}
@@ -336,27 +272,29 @@ export default function App() {
           </div>
         </div>
 
-        {/* Circular Avatar with Neumorphic Rim */}
-        <div className="relative mb-4 group">
-          <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-[#e0e5ec] shadow-[10px_10px_24px_#bec4cf,-10px_-10px_24px_#ffffff] p-1 flex items-center justify-center transition-transform duration-300 group-hover:scale-105">
-            {hasAvatar ? (
-              <img
-                src={profile.avatarUrl}
-                alt={profile.displayName || 'NEXUS Avatar'}
-                className="w-full h-full rounded-full object-cover border-2 border-white/60"
-                referrerPolicy="no-referrer"
-                onError={() => setImageError(true)}
-              />
-            ) : (
-              <div className="w-full h-full rounded-full bg-[#e0e5ec] shadow-[inset_6px_6px_12px_#bec4cf,inset_-6px_-6px_12px_#ffffff] flex items-center justify-center">
-                <UserIcon className="w-12 h-12 text-[#94a3b8]" />
-              </div>
-            )}
+        {/* Circular Avatar with Glowing Frosted Rim */}
+        <div className="relative mb-3.5 group">
+          <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-full bg-gradient-to-tr from-blue-400 via-indigo-400 to-purple-400 p-[3px] shadow-[0_10px_25px_-5px_rgba(99,102,241,0.3)] transition-transform duration-300 group-hover:scale-105">
+            <div className="w-full h-full rounded-full bg-white p-1 flex items-center justify-center overflow-hidden">
+              {hasAvatar ? (
+                <img
+                  src={profile.avatarUrl}
+                  alt={profile.displayName || 'NEXUS Avatar'}
+                  className="w-full h-full rounded-full object-cover"
+                  referrerPolicy="no-referrer"
+                  onError={() => setImageError(true)}
+                />
+              ) : (
+                <div className="w-full h-full rounded-full bg-slate-100 flex items-center justify-center">
+                  <UserIcon className="w-12 h-12 text-slate-400" />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* TikTok Verified Badge on Avatar */}
           <div 
-            className="absolute bottom-0 right-1 p-1 rounded-full bg-[#e0e5ec] shadow-[3px_3px_6px_#bec4cf,-3px_-3px_6px_#ffffff] text-blue-500 flex items-center justify-center"
+            className="absolute bottom-0 right-1 p-0.5 rounded-full bg-white shadow-md text-blue-500 flex items-center justify-center"
             title="Офіційний верифікований акаунт"
           >
             <BadgeCheck className="w-5 h-5 fill-blue-500 text-white" />
@@ -366,23 +304,23 @@ export default function App() {
         {/* Display Name NEXUS & TikTok Handle @chak.tt */}
         <div className="w-full flex flex-col items-center px-2 mb-1 text-center">
           <div className="flex items-center gap-1.5">
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-[#2d3748] uppercase">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-800 uppercase">
               {profile.displayName || 'NEXUS'}
             </h1>
-            <Zap className="w-4 h-4 text-blue-500 fill-blue-500" />
+            <Zap className="w-4 h-4 text-amber-500 fill-amber-400" />
           </div>
 
           <a 
             href={`https://tiktok.com/@${(profile.handle || '@chak.tt').replace(/^@/, '')}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-xs sm:text-sm font-bold text-blue-600 hover:text-blue-700 mt-0.5 tracking-wide flex items-center gap-1 transition-colors"
+            className="text-xs sm:text-sm font-bold text-indigo-600 hover:text-indigo-700 mt-0.5 tracking-wide flex items-center gap-1 transition-colors"
           >
             {profile.handle?.startsWith('@') ? profile.handle : `@${profile.handle || 'chak.tt'}`}
           </a>
 
           {profile.bioText && (
-            <p className="text-xs text-[#64748b] mt-2 max-w-xs leading-relaxed whitespace-pre-line font-medium">
+            <p className="text-xs text-slate-600 mt-2 max-w-xs leading-relaxed whitespace-pre-line font-medium">
               {profile.bioText}
             </p>
           )}
@@ -394,7 +332,7 @@ export default function App() {
           onCopyNotice={(msg) => showToast(msg, 'success')} 
         />
 
-        {/* TikTok Statistics (Followers, Likes, Views - defaults to 0) */}
+        {/* TikTok Statistics (Followers, Likes, Views) */}
         <StatsSection stats={profile.stats} />
 
         {/* Shorts News Section (Live admin feed) */}
@@ -403,7 +341,7 @@ export default function App() {
         {/* Links List Buttons */}
         <div className="w-full my-2">
           <div className="flex items-center justify-between px-1 mb-2">
-            <span className="text-[10px] uppercase font-bold text-[#64748b] tracking-widest">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-widest">
               Офіційні Посилання
             </span>
           </div>
@@ -411,18 +349,18 @@ export default function App() {
         </div>
 
         {/* Bottom Admin Bar or Google Login */}
-        <div className="mt-4 pt-3 w-full flex flex-col items-center justify-center select-none border-t border-[#bec4cf]/30">
+        <div className="mt-3.5 pt-3 w-full flex flex-col items-center justify-center select-none border-t border-slate-200/60">
           {isAdmin ? (
-            <div className="w-full flex items-center justify-between px-3 py-2 rounded-2xl bg-[#e0e5ec] shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff]">
+            <div className="w-full flex items-center justify-between px-3.5 py-2 rounded-2xl bg-indigo-50/60 border border-indigo-100">
               <div className="flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-blue-600" />
-                <span className="text-[11px] font-bold text-[#2d3748]">
+                <ShieldCheck className="w-4 h-4 text-indigo-600" />
+                <span className="text-[11px] font-bold text-slate-800">
                   Режим Адміністратора
                 </span>
               </div>
               <button
                 onClick={() => setIsAdminOpen(true)}
-                className="px-3 py-1 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold uppercase tracking-wider active:scale-95 transition-all shadow-[2px_2px_4px_#bec4cf] cursor-pointer"
+                className="px-3 py-1 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-bold uppercase tracking-wider active:scale-95 transition-all shadow-sm cursor-pointer"
               >
                 Керувати
               </button>
@@ -431,10 +369,10 @@ export default function App() {
             <button
               onClick={handleGoogleSignInClick}
               disabled={isAuthLoading}
-              className="w-full py-2.5 px-4 rounded-2xl bg-[#e0e5ec] shadow-[4px_4px_8px_#bec4cf,-4px_-4px_8px_#ffffff] hover:shadow-[inset_2px_2px_4px_#bec4cf,inset_-2px_-2px_4px_#ffffff] text-[#2d3748] hover:text-blue-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer disabled:opacity-60"
+              className="w-full py-2.5 px-4 rounded-2xl bg-white/70 hover:bg-white border border-white/80 hover:border-indigo-200 shadow-sm text-slate-700 hover:text-indigo-600 transition-all flex items-center justify-center gap-2 text-xs font-bold cursor-pointer disabled:opacity-60"
             >
               {isAuthLoading ? (
-                <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
               ) : (
                 <GoogleIcon />
               )}
@@ -442,7 +380,7 @@ export default function App() {
             </button>
           )}
 
-          <div className="mt-2 text-[10px] text-[#94a3b8] font-medium tracking-wider uppercase">
+          <div className="mt-2.5 text-[10px] text-slate-400 font-medium tracking-wider uppercase">
             NEXUS Bio © 2026 • Realtime Firebase
           </div>
         </div>

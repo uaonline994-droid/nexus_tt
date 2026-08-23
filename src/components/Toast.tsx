@@ -20,21 +20,21 @@ export const Toast: React.FC<ToastProps> = ({ toasts, onDismiss }) => {
           <div
             key={toast.id}
             id={`toast-${toast.id}`}
-            className="pointer-events-auto flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl nm-flat text-sm font-medium transition-all duration-300 animate-in fade-in slide-in-from-top-4"
+            className="pointer-events-auto flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-white/90 backdrop-blur-xl border border-white shadow-lg text-sm font-medium transition-all duration-300 animate-in fade-in slide-in-from-top-4"
           >
             <div className="flex items-center gap-2.5 min-w-0">
               {isError && <AlertCircle className="w-5 h-5 text-rose-500 shrink-0" />}
               {isSuccess && <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />}
-              {!isError && !isSuccess && <Info className="w-5 h-5 text-sky-500 shrink-0" />}
-              <span className={`truncate text-sm ${isError ? 'text-rose-600 font-semibold' : 'text-slate-700'}`}>
+              {!isError && !isSuccess && <Info className="w-5 h-5 text-indigo-500 shrink-0" />}
+              <span className={`truncate text-xs font-semibold ${isError ? 'text-rose-700' : isSuccess ? 'text-emerald-800' : 'text-slate-800'}`}>
                 {toast.text}
               </span>
             </div>
             <button
               onClick={() => onDismiss(toast.id)}
-              className="p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-300/30 transition-colors"
+              className="p-1 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         );

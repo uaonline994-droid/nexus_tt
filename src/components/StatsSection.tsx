@@ -18,7 +18,10 @@ export const StatsSection: React.FC<StatsSectionProps> = ({ stats }) => {
       sublabel: 'Followers',
       value: followersDisplay,
       icon: Users,
-      color: 'text-blue-600',
+      badgeColor: 'text-blue-600 bg-blue-500/10 border-blue-200/60',
+      cardBg: 'bg-gradient-to-b from-blue-50/70 to-indigo-50/30 border-blue-200/50 hover:border-blue-300',
+      glowColor: 'group-hover:shadow-[0_8px_20px_-4px_rgba(59,130,246,0.18)]',
+      textColor: 'text-blue-950',
     },
     {
       id: 'stat-likes',
@@ -26,7 +29,10 @@ export const StatsSection: React.FC<StatsSectionProps> = ({ stats }) => {
       sublabel: 'Likes',
       value: likesDisplay,
       icon: Heart,
-      color: 'text-rose-500',
+      badgeColor: 'text-rose-600 bg-rose-500/10 border-rose-200/60',
+      cardBg: 'bg-gradient-to-b from-rose-50/70 to-pink-50/30 border-rose-200/50 hover:border-rose-300',
+      glowColor: 'group-hover:shadow-[0_8px_20px_-4px_rgba(244,63,94,0.18)]',
+      textColor: 'text-rose-950',
     },
     {
       id: 'stat-views',
@@ -34,27 +40,32 @@ export const StatsSection: React.FC<StatsSectionProps> = ({ stats }) => {
       sublabel: 'Views',
       value: viewsDisplay,
       icon: Play,
-      color: 'text-purple-600',
+      badgeColor: 'text-emerald-600 bg-emerald-500/10 border-emerald-200/60',
+      cardBg: 'bg-gradient-to-b from-emerald-50/70 to-teal-50/30 border-emerald-200/50 hover:border-emerald-300',
+      glowColor: 'group-hover:shadow-[0_8px_20px_-4px_rgba(16,185,129,0.18)]',
+      textColor: 'text-emerald-950',
     }
   ];
 
   return (
-    <div className="w-full grid grid-cols-3 gap-2.5 sm:gap-3.5 my-3">
+    <div className="w-full grid grid-cols-3 gap-2.5 sm:gap-3 my-3">
       {statItems.map((item) => {
         const IconComponent = item.icon;
         return (
           <div
             key={item.id}
             id={item.id}
-            className="flex flex-col items-center justify-center py-3 px-1 rounded-2xl bg-[#e0e5ec] shadow-[6px_6px_12px_#bec4cf,-6px_-6px_12px_#ffffff] transition-all duration-200 hover:-translate-y-0.5"
+            className={`group relative flex flex-col items-center justify-center py-3 px-1 rounded-2xl backdrop-blur-md border ${item.cardBg} ${item.glowColor} transition-all duration-200 hover:-translate-y-0.5 shadow-sm`}
           >
-            <div className="flex items-center gap-1 mb-0.5">
-              <IconComponent className={`w-3 h-3 ${item.color}`} />
-              <span className="text-base sm:text-lg font-black text-[#2d3748] tracking-tight">
+            <div className="flex items-center gap-1.5 mb-0.5">
+              <div className={`w-5 h-5 rounded-full flex items-center justify-center border ${item.badgeColor}`}>
+                <IconComponent className="w-2.5 h-2.5" />
+              </div>
+              <span className={`text-base sm:text-lg font-black tracking-tight ${item.textColor}`}>
                 {item.value}
               </span>
             </div>
-            <span className="text-[9px] sm:text-[10px] uppercase tracking-wider text-[#94a3b8] font-bold">
+            <span className="text-[9.5px] sm:text-[10px] uppercase tracking-wider text-slate-500 font-bold">
               {item.label}
             </span>
           </div>
