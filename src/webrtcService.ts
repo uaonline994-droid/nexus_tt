@@ -30,8 +30,11 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
     { urls: 'stun:global.stun.twilio.com:3478' }
-  ]
+  ],
+  iceCandidatePoolSize: 10
 };
 
 export class WebRTCManager {
@@ -40,9 +43,11 @@ export class WebRTCManager {
   private localStream: MediaStream | null = null;
   private peerConnections: Map<string, RTCPeerConnection> = new Map();
   private remoteStreams: Map<string, MediaStream> = new Map();
+  private pendingCandidates: Map<string, RTCIceCandidateInit[]> = new Map();
   private callbacks: WebRTCCallbacks;
   private isJoined: boolean = false;
   private sseEventSource: EventSource | null = null;
+  private pollIntervalId: any = null;
   private unsubscribePeersRtdb: (() => void) | null = null;
   private unsubscribeSignalsRtdb: (() => void) | null = null;
 
@@ -56,7 +61,7 @@ export class WebRTCManager {
     this.localStream = localStream;
     this.isJoined = true;
 
-    // 1. Connect to Server Real-Time SSE Signaling
+    // 1. Connect to Real-Time SSE Server Signaling
     try {
       this.sseEventSource = new EventSource(`/api/room/${this.roomId}/events?peerId=${encodeURIComponent(this.localPeer.id)}`);
       
@@ -68,7 +73,7 @@ export class WebRTCManager {
             const peer = event.peer as PeerInfo;
             if (peer.id !== this.localPeer.id) {
               this.callbacks.onPeerJoined(peer);
-              // As existing peer, initiate connection to the newcomer
+              // Deterministic Caller: Existing peer initiates call to newly joined peer
               await this.initiateCall(peer.id);
             }
           } else if (event.type === 'peer_left' && event.peerId) {
@@ -79,14 +84,30 @@ export class WebRTCManager {
             await this.handleIncomingSignal(event.fromPeerId, event.signal);
           }
         } catch (err) {
-          console.warn('WebRTC SSE parse warning:', err);
+          console.warn('WebRTC SSE message warning:', err);
         }
       };
     } catch (e) {
       console.warn('WebRTC SSE init warning:', e);
     }
 
-    // 2. Announce Join via Server REST API
+    // 2. Poll fallback for zero signal drops across proxies
+    this.pollIntervalId = setInterval(async () => {
+      if (!this.isJoined) return;
+      try {
+        const res = await fetch(`/api/room/${this.roomId}/signals?peerId=${encodeURIComponent(this.localPeer.id)}`);
+        const data = await res.json();
+        if (data.success && Array.isArray(data.signals)) {
+          for (const item of data.signals) {
+            if (item && item.fromPeerId && item.signal) {
+              await this.handleIncomingSignal(item.fromPeerId, item.signal);
+            }
+          }
+        }
+      } catch (e) {}
+    }, 800);
+
+    // 3. Announce Join via Server REST API
     try {
       const res = await fetch(`/api/room/${this.roomId}/join`, {
         method: 'POST',
@@ -98,6 +119,10 @@ export class WebRTCManager {
         for (const existingPeer of data.existingPeers) {
           if (existingPeer.id !== this.localPeer.id) {
             this.callbacks.onPeerJoined(existingPeer);
+            // If local ID is lower, initiate call to established peer
+            if (this.localPeer.id.localeCompare(existingPeer.id) < 0) {
+              await this.initiateCall(existingPeer.id);
+            }
           }
         }
       }
@@ -105,7 +130,7 @@ export class WebRTCManager {
       console.warn('Server room join warning:', e);
     }
 
-    // 3. Fallback: Firebase RTDB Presence & Signaling
+    // 4. Firebase RTDB presence & signaling fallback
     try {
       const myPeerRef = ref(rtdb, `nexus_rooms/${this.roomId}/peers/${this.localPeer.id}`);
       await rtdbSet(myPeerRef, this.localPeer);
@@ -121,7 +146,7 @@ export class WebRTCManager {
               if (peer.id === this.localPeer.id) continue;
               this.callbacks.onPeerJoined(peer);
               if (!this.peerConnections.has(peer.id)) {
-                if (this.localPeer.joinedAt > peer.joinedAt) {
+                if (this.localPeer.id.localeCompare(peer.id) < 0) {
                   await this.initiateCall(peer.id);
                 }
               }
@@ -161,6 +186,7 @@ export class WebRTCManager {
       this.peerConnections.delete(peerId);
     }
     this.remoteStreams.delete(peerId);
+    this.pendingCandidates.delete(peerId);
   }
 
   private async createPeerConnection(remotePeerId: string): Promise<RTCPeerConnection> {
@@ -170,8 +196,9 @@ export class WebRTCManager {
 
     const pc = new RTCPeerConnection(RTC_CONFIG);
     this.peerConnections.set(remotePeerId, pc);
+    this.pendingCandidates.set(remotePeerId, []);
 
-    // Create container stream for remote tracks
+    // Create container stream for remote audio & video tracks
     let remoteStream = this.remoteStreams.get(remotePeerId);
     if (!remoteStream) {
       remoteStream = new MediaStream();
@@ -183,9 +210,15 @@ export class WebRTCManager {
       this.localStream.getTracks().forEach((track) => {
         pc.addTrack(track, this.localStream!);
       });
+    } else {
+      // Add transceivers so video/audio can be received or sent later
+      try {
+        pc.addTransceiver('audio', { direction: 'sendrecv' });
+        pc.addTransceiver('video', { direction: 'sendrecv' });
+      } catch (e) {}
     }
 
-    // Handle remote tracks (audio + video)
+    // Handle incoming remote media tracks (Audio + Video)
     pc.ontrack = (event) => {
       let targetStream = this.remoteStreams.get(remotePeerId);
       if (!targetStream) {
@@ -195,7 +228,7 @@ export class WebRTCManager {
 
       if (event.track) {
         // Remove existing track of same kind if replacing
-        targetStream.getTracks().forEach(t => {
+        targetStream.getTracks().forEach((t) => {
           if (t.kind === event.track.kind) {
             targetStream!.removeTrack(t);
           }
@@ -204,8 +237,8 @@ export class WebRTCManager {
       }
 
       if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach(t => {
-          if (!targetStream!.getTracks().some(existing => existing.id === t.id)) {
+        event.streams[0].getTracks().forEach((t) => {
+          if (!targetStream!.getTracks().some((existing) => existing.id === t.id)) {
             targetStream!.addTrack(t);
           }
         });
@@ -214,7 +247,7 @@ export class WebRTCManager {
       this.callbacks.onRemoteStream(remotePeerId, targetStream);
     };
 
-    // Send ICE Candidates
+    // Send ICE Candidates immediately
     pc.onicecandidate = async (event) => {
       if (event.candidate) {
         const candidatePayload = {
@@ -235,7 +268,7 @@ export class WebRTCManager {
           }).catch(() => {});
         } catch (e) {}
 
-        // RTDB signaling
+        // RTDB signaling fallback
         try {
           const candRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${remotePeerId}/${this.localPeer.id}`);
           rtdbSet(candRef, candidatePayload).catch(() => {});
@@ -287,12 +320,26 @@ export class WebRTCManager {
     }
   }
 
+  private async drainPendingCandidates(peerId: string, pc: RTCPeerConnection) {
+    const pending = this.pendingCandidates.get(peerId) || [];
+    for (const cand of pending) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (e) {
+        console.warn('Drain candidate notice:', e);
+      }
+    }
+    this.pendingCandidates.set(peerId, []);
+  }
+
   private async handleIncomingSignal(fromPeerId: string, signal: { type: string; sdp?: string; candidate?: string }) {
     try {
       const pc = await this.createPeerConnection(fromPeerId);
 
       if (signal.type === 'offer' && signal.sdp) {
         await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: signal.sdp }));
+        await this.drainPendingCandidates(fromPeerId, pc);
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
@@ -320,11 +367,19 @@ export class WebRTCManager {
       } else if (signal.type === 'answer' && signal.sdp) {
         if (pc.signalingState === 'have-local-offer') {
           await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: signal.sdp }));
+          await this.drainPendingCandidates(fromPeerId, pc);
         }
       } else if (signal.type === 'candidate' && signal.candidate) {
         try {
           const candidateData = JSON.parse(signal.candidate);
-          await pc.addIceCandidate(new RTCIceCandidate(candidateData));
+          if (pc.remoteDescription && pc.remoteDescription.type) {
+            await pc.addIceCandidate(new RTCIceCandidate(candidateData));
+          } else {
+            // Buffer candidate until remote description is set
+            const pending = this.pendingCandidates.get(fromPeerId) || [];
+            pending.push(candidateData);
+            this.pendingCandidates.set(fromPeerId, pending);
+          }
         } catch (candErr) {
           console.warn('Add ICE candidate warning:', candErr);
         }
@@ -353,15 +408,28 @@ export class WebRTCManager {
 
   public replaceVideoTrack(newTrack: MediaStreamTrack | null) {
     this.peerConnections.forEach((pc) => {
-      const sender = pc.getSenders().find((s) => s.track && s.track.kind === 'video');
-      if (sender) {
-        if (newTrack) {
-          sender.replaceTrack(newTrack).catch((err) => {
-            console.warn('replaceTrack error:', err);
-          });
-        }
-      } else if (newTrack && this.localStream) {
-        pc.addTrack(newTrack, this.localStream);
+      const senders = pc.getSenders();
+      const videoSender = senders.find((s) => s.track && s.track.kind === 'video') || senders.find((s) => !s.track);
+      if (videoSender) {
+        videoSender.replaceTrack(newTrack).catch((err) => {
+          console.warn('replaceTrack error:', err);
+        });
+      } else if (newTrack) {
+        try {
+          pc.addTrack(newTrack, this.localStream || new MediaStream());
+        } catch (e) {}
+      }
+    });
+  }
+
+  public replaceAudioTrack(newTrack: MediaStreamTrack | null) {
+    this.peerConnections.forEach((pc) => {
+      const senders = pc.getSenders();
+      const audioSender = senders.find((s) => s.track && s.track.kind === 'audio');
+      if (audioSender && newTrack) {
+        audioSender.replaceTrack(newTrack).catch((err) => {
+          console.warn('replaceAudioTrack error:', err);
+        });
       }
     });
   }
@@ -369,6 +437,10 @@ export class WebRTCManager {
   public async leave() {
     this.isJoined = false;
 
+    if (this.pollIntervalId) {
+      clearInterval(this.pollIntervalId);
+      this.pollIntervalId = null;
+    }
     if (this.sseEventSource) {
       this.sseEventSource.close();
       this.sseEventSource = null;
@@ -389,6 +461,7 @@ export class WebRTCManager {
     });
     this.peerConnections.clear();
     this.remoteStreams.clear();
+    this.pendingCandidates.clear();
 
     // Remove presence from RTDB
     try {
@@ -399,7 +472,7 @@ export class WebRTCManager {
 }
 
 /**
- * Microphone decibel meter
+ * Microphone & Voice Decibel Analyzer (Web Audio API)
  */
 export function createAudioLevelMeter(
   stream: MediaStream, 
@@ -416,6 +489,7 @@ export function createAudioLevelMeter(
     const source = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.4;
     source.connect(analyser);
 
     const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -428,7 +502,7 @@ export function createAudioLevelMeter(
       const avg = sum / dataArray.length;
       
       const normalizedLevel = Math.min(100, Math.round((avg / 128) * 100));
-      const isSpeaking = avg > 14;
+      const isSpeaking = avg > 12;
       onLevelChange(normalizedLevel, isSpeaking);
 
       requestAnimationFrame(update);

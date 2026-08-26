@@ -210,7 +210,7 @@ function getChatSettings(): any {
     isReadOnly: false,
     whitelistOnly: false,
     allowedChatEmails: [ADMIN_EMAIL.toLowerCase()],
-    slowmodeSeconds: 300
+    slowmodeSeconds: 0
   };
   try {
     if (!fs.existsSync(CHAT_SETTINGS_FILE)) {
@@ -291,6 +291,8 @@ interface RoomPeer {
 const roomsMap = new Map<string, Map<string, RoomPeer>>();
 // Map: roomId -> Map<peerId, express.Response>
 const roomSSEClients = new Map<string, Map<string, express.Response>>();
+// Buffer: `${roomId}_${toPeerId}` -> Array of pending signals
+const pendingSignalsMap = new Map<string, any[]>();
 
 function broadcastToRoom(roomId: string, event: any, excludePeerId?: string) {
   const roomClients = roomSSEClients.get(roomId);
@@ -305,6 +307,14 @@ function broadcastToRoom(roomId: string, event: any, excludePeerId?: string) {
 }
 
 function sendSignalToPeer(roomId: string, toPeerId: string, event: any) {
+  // 1. Buffer in pending queue
+  const queueKey = `${roomId}_${toPeerId}`;
+  const existingQueue = pendingSignalsMap.get(queueKey) || [];
+  existingQueue.push({ ...event, timestamp: Date.now() });
+  // Keep max 50 pending signals
+  pendingSignalsMap.set(queueKey, existingQueue.slice(-50));
+
+  // 2. Direct SSE delivery
   const roomClients = roomSSEClients.get(roomId);
   if (!roomClients) return;
   const targetRes = roomClients.get(toPeerId);
@@ -314,6 +324,21 @@ function sendSignalToPeer(roomId: string, toPeerId: string, event: any) {
     } catch (e) {}
   }
 }
+
+// Keep-alive heartbeat interval for SSE (Chat & WebRTC Rooms)
+setInterval(() => {
+  // Chat SSE Heartbeat
+  chatSSEClients.forEach(client => {
+    try { client.res.write(': ping\n\n'); } catch (e) {}
+  });
+
+  // Room SSE Heartbeat
+  roomSSEClients.forEach(roomClients => {
+    roomClients.forEach(res => {
+      try { res.write(': ping\n\n'); } catch (e) {}
+    });
+  });
+}, 10000);
 
 const DEFAULT_PROFILE = {
   avatarUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80",
@@ -770,6 +795,21 @@ app.post('/api/room/:roomId/signal', (req, res) => {
   });
 
   res.json({ success: true });
+});
+
+// WebRTC Signals Polling Endpoint (Zero-dropped signals fallback)
+app.get('/api/room/:roomId/signals', (req, res) => {
+  const { roomId } = req.params;
+  const peerId = String(req.query.peerId || '');
+  if (!peerId) {
+    return res.json({ success: true, signals: [] });
+  }
+
+  const queueKey = `${roomId}_${peerId}`;
+  const signals = pendingSignalsMap.get(queueKey) || [];
+  // Clear fetched signals
+  pendingSignalsMap.set(queueKey, []);
+  res.json({ success: true, signals });
 });
 
 // WebRTC Room SSE Connection

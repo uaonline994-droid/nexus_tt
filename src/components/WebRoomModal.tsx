@@ -71,20 +71,29 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
       let stream: MediaStream | null = null;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true
+          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
         });
+        setIsCameraOn(true);
       } catch (err: any) {
         console.warn('Video+Audio getUserMedia failed, attempting audio-only:', err);
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: false,
-            audio: true
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true
+            }
           });
           setIsCameraOn(false);
         } catch (audioErr: any) {
           console.warn('Microphone permission blocked or unavailable:', audioErr);
-          setMediaError('Доступ до камери або мікрофона заблоковано в браузері. Перевірте дозволи.');
+          setMediaError('Доступ до камери або мікрофона не надано. Ви можете слухати та бачити інших учасників.');
           setIsCameraOn(false);
         }
       }
@@ -655,6 +664,7 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
 const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ peer, stream }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [audioBlocked, setAudioBlocked] = useState(false);
 
   useEffect(() => {
     if (stream) {
@@ -664,10 +674,20 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
       }
       if (audioRef.current) {
         audioRef.current.srcObject = stream;
-        audioRef.current.play().catch(() => {});
+        audioRef.current.play().catch(() => {
+          setAudioBlocked(true);
+        });
       }
     }
   }, [stream]);
+
+  const handleUnblockAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.play().then(() => {
+        setAudioBlocked(false);
+      }).catch(() => {});
+    }
+  };
 
   const hasVideo = Boolean(
     stream && 
@@ -677,7 +697,7 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
 
   return (
     <div className={`relative aspect-video rounded-3xl bg-slate-900 border overflow-hidden flex items-center justify-center shadow-xl transition-all ${
-      peer.isSpeaking ? 'border-emerald-500 ring-2 ring-emerald-500/50' : 'border-white/10'
+      peer.isSpeaking ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-emerald-500/20' : 'border-white/10'
     }`}>
       {/* Remote Audio Track (Plays voice sound directly from remote peer!) */}
       <audio ref={audioRef} autoPlay playsInline />
@@ -691,13 +711,29 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
         />
       ) : (
         <div className="flex flex-col items-center gap-2">
-          <img
-            src={peer.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
-            alt={peer.name}
-            className="w-16 h-16 rounded-full border-2 border-indigo-500 object-cover"
-          />
+          <div className="relative">
+            <img
+              src={peer.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+              alt={peer.name}
+              className="w-16 h-16 rounded-full border-2 border-indigo-500 object-cover"
+            />
+            {peer.isSpeaking && (
+              <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full border-2 border-slate-900 animate-pulse" />
+            )}
+          </div>
           <span className="text-xs font-bold text-slate-300">{peer.name}</span>
         </div>
+      )}
+
+      {/* Audio Playback Unblock Overlay if browser paused sound */}
+      {audioBlocked && (
+        <button
+          onClick={handleUnblockAudio}
+          className="absolute top-3 left-3 px-3 py-1 bg-amber-500/90 text-slate-950 font-bold text-[11px] rounded-lg shadow-lg flex items-center gap-1.5 cursor-pointer backdrop-blur-sm animate-pulse z-10"
+        >
+          <Volume2 className="w-3.5 h-3.5" />
+          <span>Увімкнути звук</span>
+        </button>
       )}
 
       {/* Bottom Overlay Label */}

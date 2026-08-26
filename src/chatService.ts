@@ -1,4 +1,9 @@
-import { ref, rtdbSet, rtdbGet, rtdbOnValue, doc, setDoc, onSnapshot, getDoc } from './firebase';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { ref, rtdbSet, rtdbGet, rtdbOnValue, doc, setDoc, onSnapshot } from './firebase';
 import { db, rtdb, ADMIN_EMAIL } from './firebase';
 import { ChatMessage, ChatModerationState, ChatSettings, WebRoomSettings } from './types';
 
@@ -7,23 +12,37 @@ const CHAT_SETTINGS_RTDB_PATH = 'nexus_chat/settings';
 const CHAT_MODERATION_RTDB_PATH = 'nexus_chat/moderation';
 const WEB_ROOM_SETTINGS_RTDB_PATH = 'nexus_chat/web_room_settings';
 
-const LOCAL_CHAT_KEY = 'nexus_chat_cached_messages_v1';
+const LOCAL_CHAT_KEY = 'nexus_chat_cached_messages_v2';
 const LOCAL_COOLDOWN_KEY = 'nexus_chat_last_message_time';
 
-export const CHAT_COOLDOWN_SECONDS = 300;
+export const CHAT_COOLDOWN_SECONDS = 0; // Default instant chat for all users
 
 export const DEFAULT_CHAT_SETTINGS: ChatSettings = {
   isChatOpenForAll: true,
   isReadOnly: false,
   whitelistOnly: false,
   allowedChatEmails: [ADMIN_EMAIL.toLowerCase()],
-  slowmodeSeconds: 300
+  slowmodeSeconds: 0
 };
 
 export const DEFAULT_WEB_ROOM_SETTINGS: WebRoomSettings = {
   betaTestForAll: false,
   allowedEmails: [ADMIN_EMAIL.toLowerCase()]
 };
+
+/**
+ * Check if a user has access to a Web Room
+ */
+export function checkUserWebRoomAccess(
+  userEmail: string | undefined,
+  settings: WebRoomSettings = DEFAULT_WEB_ROOM_SETTINGS
+): boolean {
+  if (!userEmail) return false;
+  const email = userEmail.toLowerCase().trim();
+  if (email === ADMIN_EMAIL.toLowerCase().trim()) return true;
+  if (settings.betaTestForAll) return true;
+  return (settings.allowedEmails || []).some(e => e.toLowerCase().trim() === email);
+}
 
 const INITIAL_MESSAGES: ChatMessage[] = [
   {
@@ -44,7 +63,7 @@ const INITIAL_MESSAGES: ChatMessage[] = [
     senderEmail: 'bot@nexus.tt',
     senderAvatar: 'https://images.unsplash.com/photo-1614680376593-902f749f7ffc?w=400&auto=format&fit=crop&q=80',
     isAdmin: false,
-    text: '🛡️ Правила чату: повага один до одного, заборонено спам. Звичайні користувачі можуть надсилати повідомлення згідно з налаштуваннями адміністратора. Для тегу адміна пишіть @nexus.',
+    text: '🛡️ Правила чату: повага один до одного, заборонено спам. Чат відкритий для всіх користувачів у реальному часі! Для тегу адміна пишіть @nexus.',
     timestamp: Date.now() - 1800000,
     mentionsAdmin: false
   }
@@ -52,6 +71,22 @@ const INITIAL_MESSAGES: ChatMessage[] = [
 
 let cachedChatSettings: ChatSettings = DEFAULT_CHAT_SETTINGS;
 let cachedModerationState: ChatModerationState = { mutedUsers: {}, bannedUsers: {} };
+
+/**
+ * Merge two message lists and deduplicate by id, sorted by timestamp
+ */
+export function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+  const map = new Map<string, ChatMessage>();
+  existing.forEach((m) => {
+    if (m && m.id) map.set(m.id, m);
+  });
+  incoming.forEach((m) => {
+    if (m && m.id) map.set(m.id, m);
+  });
+  const list = Array.from(map.values());
+  list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  return list;
+}
 
 /**
  * Get cached chat messages from LocalStorage or default
@@ -73,9 +108,9 @@ export function getLocalChatMessages(): ChatMessage[] {
 /**
  * Check if user is currently under cooldown
  */
-export function getUserCooldownRemaining(userEmail: string, slowmodeSeconds: number = 300): number {
+export function getUserCooldownRemaining(userEmail: string, slowmodeSeconds: number = 0): number {
   if (!userEmail) return 0;
-  if (userEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return 0; // Admin has no cooldown
+  if (userEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return 0;
   if (slowmodeSeconds <= 0) return 0;
 
   try {
@@ -125,11 +160,7 @@ export function checkUserChatAccess(
   const emailKey = email.replace(/[^a-zA-Z0-9]/g, '_');
   if (moderation.bannedUsers && moderation.bannedUsers[emailKey]) {
     const msg = `⛔ Ваш доступ до чату заблоковано адміністратором (${moderation.bannedUsers[emailKey].reason || 'Порушення правил'}).`;
-    return { 
-      allowed: false, 
-      error: msg,
-      reason: msg
-    };
+    return { allowed: false, error: msg, reason: msg };
   }
 
   // 2. Check Muted
@@ -138,11 +169,7 @@ export function checkUserChatAccess(
     if (muteInfo.mutedUntil > Date.now()) {
       const remainingMin = Math.ceil((muteInfo.mutedUntil - Date.now()) / 60000);
       const msg = `🔇 Ви перебуваєте у муті ще ${remainingMin} хв (${muteInfo.reason || 'Тимчасове обмеження'}).`;
-      return { 
-        allowed: false, 
-        error: msg,
-        reason: msg
-      };
+      return { allowed: false, error: msg, reason: msg };
     }
   }
 
@@ -210,7 +237,7 @@ export function subscribeToChatSettings(onUpdate: (settings: ChatSettings) => vo
             isReadOnly: Boolean(val.isReadOnly),
             whitelistOnly: Boolean(val.whitelistOnly),
             allowedChatEmails: Array.isArray(val.allowedChatEmails) ? val.allowedChatEmails : [ADMIN_EMAIL.toLowerCase()],
-            slowmodeSeconds: typeof val.slowmodeSeconds === 'number' ? val.slowmodeSeconds : 300
+            slowmodeSeconds: typeof val.slowmodeSeconds === 'number' ? val.slowmodeSeconds : 0
           };
           cachedChatSettings = settings;
           try {
@@ -322,66 +349,80 @@ export function subscribeToModerationState(onUpdate: (state: ChatModerationState
 }
 
 /**
- * Subscribe to live chat messages (Server SSE + Firestore + RTDB)
+ * Subscribe to live chat messages (Server SSE + Polling + Firestore + RTDB)
+ * Ensures 1 unified chat where every message from anyone is visible to everyone in real time!
  */
 export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => void): () => void {
   let isSubscribed = true;
-  let currentList: ChatMessage[] = getLocalChatMessages();
+  let currentMessages: ChatMessage[] = getLocalChatMessages();
 
-  const updateStateAndCache = (newMessages: ChatMessage[]) => {
-    currentList = newMessages;
+  const handleUpdate = (incoming: ChatMessage[]) => {
+    if (!isSubscribed) return;
+    const merged = mergeMessages(currentMessages, incoming);
+    currentMessages = merged;
     try {
-      localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(newMessages));
+      localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(merged));
     } catch (e) {}
-    onUpdate(newMessages);
+    onUpdate(merged);
   };
 
-  // Local load first
-  onUpdate(currentList);
+  // Immediate local emit
+  onUpdate(currentMessages);
 
-  // 1. Fetch current full chat history from server
-  fetch('/api/chat/messages')
-    .then(res => res.json())
-    .then(data => {
+  // 1. Initial & Recurring Server REST Polling (Guaranteed Delivery)
+  const fetchServerMessages = async () => {
+    try {
+      const res = await fetch('/api/chat/messages');
+      const data = await res.json();
       if (isSubscribed && data.success && Array.isArray(data.messages)) {
-        updateStateAndCache(data.messages);
+        handleUpdate(data.messages);
       }
-    })
-    .catch(() => {});
+    } catch (e) {}
+  };
 
-  // 2. Server-Sent Events (SSE) for instant cross-device live sync
+  fetchServerMessages();
+  const pollInterval = setInterval(fetchServerMessages, 2500);
+
+  // 2. Server-Sent Events (SSE) for instant cross-device live push
   let eventSource: EventSource | null = null;
-  try {
-    eventSource = new EventSource('/api/chat/events');
-    eventSource.onmessage = (e) => {
-      if (!isSubscribed) return;
-      try {
-        const event = JSON.parse(e.data);
-        if (event.type === 'init' && Array.isArray(event.data)) {
-          updateStateAndCache(event.data);
-        } else if (event.type === 'message' && event.data) {
-          // Avoid duplicates
-          const msg = event.data as ChatMessage;
-          const exists = currentList.some(m => m.id === msg.id);
-          if (!exists) {
-            const updated = [...currentList, msg];
-            updateStateAndCache(updated);
+  const connectSSE = () => {
+    try {
+      if (eventSource) eventSource.close();
+      eventSource = new EventSource('/api/chat/events');
+      
+      eventSource.onmessage = (e) => {
+        if (!isSubscribed) return;
+        try {
+          const event = JSON.parse(e.data);
+          if (event.type === 'init' && Array.isArray(event.data)) {
+            handleUpdate(event.data);
+          } else if (event.type === 'message' && event.data) {
+            handleUpdate([event.data as ChatMessage]);
+          } else if (event.type === 'delete' && event.id) {
+            currentMessages = currentMessages.filter((m) => m.id !== event.id);
+            try {
+              localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(currentMessages));
+            } catch (e) {}
+            onUpdate(currentMessages);
+          } else if (event.type === 'clear' && Array.isArray(event.data)) {
+            currentMessages = event.data;
+            try {
+              localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(currentMessages));
+            } catch (e) {}
+            onUpdate(currentMessages);
           }
-        } else if (event.type === 'delete' && event.id) {
-          const updated = currentList.filter(m => m.id !== event.id);
-          updateStateAndCache(updated);
-        } else if (event.type === 'clear' && Array.isArray(event.data)) {
-          updateStateAndCache(event.data);
-        }
-      } catch (err) {
-        console.warn('Error parsing chat SSE:', err);
-      }
-    };
-  } catch (e) {
-    console.warn('Chat SSE init warning:', e);
-  }
+        } catch (err) {}
+      };
 
-  // 3. RTDB listener fallback
+      eventSource.onerror = () => {
+        // SSE will auto-retry, polling will handle it in the meantime
+      };
+    } catch (e) {}
+  };
+
+  connectSSE();
+
+  // 3. RTDB Listener
   let unsubscribeRtdb: (() => void) | null = null;
   try {
     const dbRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
@@ -396,21 +437,33 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
           } else if (typeof val === 'object') {
             list = Object.values(val) as ChatMessage[];
           }
-          list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
           if (list.length > 0) {
-            updateStateAndCache(list);
+            handleUpdate(list);
           }
         }
       }
     });
   } catch (e) {}
 
-  // 4. Cross-tab local events
+  // 4. Cross-tab BroadcastChannel & Local Events
+  let broadcastChannel: BroadcastChannel | null = null;
+  try {
+    broadcastChannel = new BroadcastChannel('nexus_global_chat_channel');
+    broadcastChannel.onmessage = (e) => {
+      if (!isSubscribed) return;
+      if (Array.isArray(e.data)) {
+        handleUpdate(e.data);
+      } else if (e.data && e.data.id) {
+        handleUpdate([e.data]);
+      }
+    };
+  } catch (e) {}
+
   const handleLocalEvent = (e: Event) => {
     if (!isSubscribed) return;
     const customEvent = e as CustomEvent<ChatMessage[]>;
     if (customEvent.detail) {
-      updateStateAndCache(customEvent.detail);
+      handleUpdate(customEvent.detail);
     }
   };
 
@@ -420,8 +473,12 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
 
   return () => {
     isSubscribed = false;
+    clearInterval(pollInterval);
     if (eventSource) {
       eventSource.close();
+    }
+    if (broadcastChannel) {
+      broadcastChannel.close();
     }
     if (unsubscribeRtdb) unsubscribeRtdb();
     if (typeof window !== 'undefined') {
@@ -453,10 +510,9 @@ export async function sendChatMessage(
     if (type === 'text') {
       const cooldown = getUserCooldownRemaining(sender.email, cachedChatSettings.slowmodeSeconds);
       if (cooldown > 0) {
-        const minutes = Math.ceil(cooldown / 60);
-        return { 
-          success: false, 
-          error: `Анти-спам обмеження: ви зможете надіслати наступне повідомлення через ${cooldown} сек (приблизно ${minutes} хв).` 
+        return {
+          success: false,
+          error: `Зачекайте ще ${cooldown} сек перед наступним повідомленням.`
         };
       }
     }
@@ -470,9 +526,9 @@ export async function sendChatMessage(
   const mentionsAdmin = cleanText.toLowerCase().includes('@nexus') || cleanText.toLowerCase().includes('@chak.tt');
 
   const newMsg: ChatMessage = {
-    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+    id: 'msg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 8),
     senderId: sender.id || 'user_' + Date.now(),
-    senderName: sender.name || 'Гість',
+    senderName: sender.name || 'Користувач',
     senderEmail: sender.email,
     senderAvatar: sender.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
     isAdmin,
@@ -484,12 +540,15 @@ export async function sendChatMessage(
     roomData
   };
 
-  // 1. Optimistic Local Update
+  // 1. Optimistic Local Update & Broadcast
   const currentMessages = getLocalChatMessages();
-  const updatedMessages = [...currentMessages, newMsg];
+  const updatedMessages = mergeMessages(currentMessages, [newMsg]);
   try {
     localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(updatedMessages));
     window.dispatchEvent(new CustomEvent('nexus_chat_local_update', { detail: updatedMessages }));
+    const bc = new BroadcastChannel('nexus_global_chat_channel');
+    bc.postMessage(newMsg);
+    bc.close();
   } catch (e) {}
 
   if (!isAdmin && type === 'text') {
@@ -508,34 +567,30 @@ export async function sendChatMessage(
       return { success: false, error: result.error };
     }
   } catch (err: any) {
-    console.warn('Server chat post error, relying on RTDB fallback:', err);
+    console.warn('Server chat post notice:', err);
   }
 
   // 3. Save to Firebase Realtime Database
   try {
     const messageRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${newMsg.id}`);
     await rtdbSet(messageRef, newMsg);
-  } catch (err: any) {
-    console.warn('Realtime database chat send notice:', err);
-  }
+  } catch (err: any) {}
 
   // 4. Save to Firestore
   try {
     const docRef = doc(db, 'nexus_chat_messages', newMsg.id);
     await setDoc(docRef, newMsg);
-  } catch (err: any) {
-    console.warn('Firestore chat send notice:', err);
-  }
+  } catch (err: any) {}
 
   return { success: true };
 }
 
 /**
- * Delete message (Admin Only)
+ * Delete a chat message (Admin Only)
  */
 export async function deleteChatMessage(messageId: string): Promise<boolean> {
-  const current = getLocalChatMessages();
-  const filtered = current.filter(m => m.id !== messageId);
+  const currentMessages = getLocalChatMessages();
+  const filtered = currentMessages.filter((m) => m.id !== messageId);
   try {
     localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(filtered));
     window.dispatchEvent(new CustomEvent('nexus_chat_local_update', { detail: filtered }));
@@ -549,18 +604,13 @@ export async function deleteChatMessage(messageId: string): Promise<boolean> {
   try {
     const messageRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${messageId}`);
     await rtdbSet(messageRef, null);
-  } catch (e) {}
-
-  try {
-    const docRef = doc(db, 'nexus_chat_messages', messageId);
-    await setDoc(docRef, { deleted: true }, { merge: true });
-  } catch (e) {}
+  } catch (err) {}
 
   return true;
 }
 
 /**
- * Clear all chat messages (Admin Only)
+ * Clear all chat messages (Reset to welcome)
  */
 export async function clearAllChatMessages(): Promise<boolean> {
   try {
@@ -576,24 +626,82 @@ export async function clearAllChatMessages(): Promise<boolean> {
   try {
     const chatRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
     const initialObj: Record<string, ChatMessage> = {};
-    INITIAL_MESSAGES.forEach(m => { initialObj[m.id] = m; });
+    INITIAL_MESSAGES.forEach((m) => {
+      initialObj[m.id] = m;
+    });
     await rtdbSet(chatRef, initialObj);
+  } catch (err) {}
+
+  return true;
+}
+
+/**
+ * Set user moderation status (Mute or Ban)
+ */
+export async function setModerationStatus(
+  targetEmail: string,
+  type: 'mute' | 'ban' | 'unmute' | 'unban',
+  durationMinutes: number = 30,
+  reason: string = 'Порушення правил чату'
+): Promise<boolean> {
+  const emailKey = targetEmail.toLowerCase().replace(/[^a-zA-Z0-9]/g, '_');
+  const currentMod = { ...cachedModerationState };
+  currentMod.mutedUsers = { ...currentMod.mutedUsers };
+  currentMod.bannedUsers = { ...currentMod.bannedUsers };
+
+  if (type === 'ban') {
+    currentMod.bannedUsers[emailKey] = {
+      email: targetEmail,
+      bannedAt: Date.now(),
+      reason
+    };
+  } else if (type === 'unban') {
+    delete currentMod.bannedUsers[emailKey];
+  } else if (type === 'mute') {
+    currentMod.mutedUsers[emailKey] = {
+      email: targetEmail,
+      mutedUntil: Date.now() + durationMinutes * 60 * 1000,
+      reason
+    };
+  } else if (type === 'unmute') {
+    delete currentMod.mutedUsers[emailKey];
+  }
+
+  cachedModerationState = currentMod;
+  try {
+    localStorage.setItem('nexus_chat_moderation_v1', JSON.stringify(currentMod));
+  } catch (e) {}
+
+  // Server API
+  try {
+    await fetch('/api/chat/moderation', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(currentMod)
+    });
+  } catch (e) {}
+
+  try {
+    const dbRef = ref(rtdb, CHAT_MODERATION_RTDB_PATH);
+    await rtdbSet(dbRef, {
+      muted: currentMod.mutedUsers,
+      banned: currentMod.bannedUsers
+    });
   } catch (e) {}
 
   return true;
 }
 
 /**
- * Subscribe to Web Room Settings (Beta Test status & Allowed Emails)
+ * Subscribe to Web Room Settings
  */
 export function subscribeToWebRoomSettings(onUpdate: (settings: WebRoomSettings) => void): () => void {
   let isSubscribed = true;
 
-  // Local check
   try {
-    const raw = localStorage.getItem('nexus_web_room_settings');
+    const raw = localStorage.getItem('nexus_web_room_settings_v1');
     if (raw) {
-      onUpdate(JSON.parse(raw));
+      onUpdate({ ...DEFAULT_WEB_ROOM_SETTINGS, ...JSON.parse(raw) });
     } else {
       onUpdate(DEFAULT_WEB_ROOM_SETTINGS);
     }
@@ -604,17 +712,17 @@ export function subscribeToWebRoomSettings(onUpdate: (settings: WebRoomSettings)
   let unsubscribeRtdb: (() => void) | null = null;
   try {
     const dbRef = ref(rtdb, WEB_ROOM_SETTINGS_RTDB_PATH);
-    unsubscribeRtdb = rtdbOnValue(dbRef, (snap) => {
+    unsubscribeRtdb = rtdbOnValue(dbRef, (snapshot) => {
       if (!isSubscribed) return;
-      if (snap.exists()) {
-        const val = snap.val();
+      if (snapshot.exists()) {
+        const val = snapshot.val();
         if (val) {
           const settings: WebRoomSettings = {
             betaTestForAll: Boolean(val.betaTestForAll),
             allowedEmails: Array.isArray(val.allowedEmails) ? val.allowedEmails : [ADMIN_EMAIL.toLowerCase()]
           };
           try {
-            localStorage.setItem('nexus_web_room_settings', JSON.stringify(settings));
+            localStorage.setItem('nexus_web_room_settings_v1', JSON.stringify(settings));
           } catch (e) {}
           onUpdate(settings);
         }
@@ -633,7 +741,7 @@ export function subscribeToWebRoomSettings(onUpdate: (settings: WebRoomSettings)
  */
 export async function saveWebRoomSettings(settings: WebRoomSettings): Promise<boolean> {
   try {
-    localStorage.setItem('nexus_web_room_settings', JSON.stringify(settings));
+    localStorage.setItem('nexus_web_room_settings_v1', JSON.stringify(settings));
   } catch (e) {}
 
   try {
@@ -642,77 +750,9 @@ export async function saveWebRoomSettings(settings: WebRoomSettings): Promise<bo
   } catch (e) {}
 
   try {
-    const docRef = doc(db, 'nexus_chat_settings', 'web_room');
+    const docRef = doc(db, 'nexus_chat_settings', 'web_room_settings');
     await setDoc(docRef, settings, { merge: true });
   } catch (e) {}
 
   return true;
 }
-
-/**
- * Check if a user has access to Web Rooms (Discord-like voice/video rooms)
- */
-export function checkUserWebRoomAccess(userEmail: string | undefined, settings: WebRoomSettings): boolean {
-  if (!userEmail) return false;
-  const email = userEmail.toLowerCase().trim();
-  if (email === ADMIN_EMAIL.toLowerCase().trim()) return true; // Admin always has access
-  if (settings.betaTestForAll) return true; // Beta test opened for everyone
-  return (settings.allowedEmails || []).some(e => e.toLowerCase().trim() === email);
-}
-
-/**
- * Moderation: Ban or Mute user
- */
-export async function setModerationStatus(
-  userEmail: string, 
-  action: 'mute' | 'ban' | 'unmute' | 'unban', 
-  durationMinutes: number = 60,
-  reason: string = 'Порушення правил чату'
-): Promise<boolean> {
-  if (!userEmail) return false;
-  const cleanEmail = userEmail.trim();
-  const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-
-  // Optimistic local state update
-  const currentMod = { ...cachedModerationState };
-  currentMod.mutedUsers = { ...(currentMod.mutedUsers || {}) };
-  currentMod.bannedUsers = { ...(currentMod.bannedUsers || {}) };
-
-  if (action === 'mute') {
-    const calculatedMuteUntil = durationMinutes === -1 ? 9999999999999 : Date.now() + (durationMinutes * 60 * 1000);
-    currentMod.mutedUsers[emailKey] = { mutedUntil: calculatedMuteUntil, reason, email: cleanEmail };
-  } else if (action === 'ban') {
-    currentMod.bannedUsers[emailKey] = { bannedAt: Date.now(), reason, email: cleanEmail };
-  } else if (action === 'unmute') {
-    delete currentMod.mutedUsers[emailKey];
-  } else if (action === 'unban') {
-    delete currentMod.bannedUsers[emailKey];
-  }
-
-  cachedModerationState = currentMod;
-  try {
-    localStorage.setItem('nexus_chat_moderation_v1', JSON.stringify(currentMod));
-  } catch (e) {}
-
-  try {
-    if (action === 'mute') {
-      const calculatedMuteUntil = durationMinutes === -1 ? 9999999999999 : Date.now() + (durationMinutes * 60 * 1000);
-      const muteRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/muted/${emailKey}`);
-      await rtdbSet(muteRef, { mutedUntil: calculatedMuteUntil, reason, email: cleanEmail });
-    } else if (action === 'ban') {
-      const banRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/banned/${emailKey}`);
-      await rtdbSet(banRef, { bannedAt: Date.now(), reason, email: cleanEmail });
-    } else if (action === 'unmute') {
-      const muteRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/muted/${emailKey}`);
-      await rtdbSet(muteRef, null);
-    } else if (action === 'unban') {
-      const banRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/banned/${emailKey}`);
-      await rtdbSet(banRef, null);
-    }
-  } catch (e) {
-    console.warn('Moderation error:', e);
-  }
-
-  return true;
-}
-
