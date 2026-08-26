@@ -51,7 +51,6 @@ import { LinksList } from './components/LinksList';
 import { AdminModal } from './components/AdminModal';
 import { GeneralChat } from './components/GeneralChat';
 import { WebRoomModal } from './components/WebRoomModal';
-import { GoogleAuthModal } from './components/GoogleAuthModal';
 import { QuickStatModal } from './components/QuickStatModal';
 import { QuickAddNewsModal } from './components/QuickAddNewsModal';
 import { QuickAddLinkModal } from './components/QuickAddLinkModal';
@@ -99,7 +98,6 @@ export default function App() {
   const [isCopiedShare, setIsCopiedShare] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   // Quick Edit Modals State
   const [quickStatKey, setQuickStatKey] = useState<'followers' | 'likes' | 'views' | null>(null);
@@ -176,7 +174,7 @@ export default function App() {
     return () => unsubscribeSettings();
   }, []);
 
-  // Google Sign In
+  // Google Sign In via Firebase Auth
   const handleGoogleSignInClick = async () => {
     setIsAuthLoading(true);
     soundService.playClickSound();
@@ -195,30 +193,22 @@ export default function App() {
         });
 
         if (userIsAdmin) {
-          showToast('👑 Ласкаво просимо, Головний Адміністратор! Повний доступ активовано.', 'success');
+          showToast('👑 Ласкаво просимо, Головний Адміністратор (NEXUS)! Повний доступ активовано.', 'success');
         } else {
           showToast(`Ви увійшли як ${user.displayName || user.email}. Доступ до чату та кімнат надано.`, 'success');
         }
       }
     } catch (err: any) {
-      console.warn('Firebase Auth popup info:', err);
+      console.error('Firebase Auth error:', err);
       if (err.code === 'auth/popup-closed-by-user') {
         showToast('Вікно вибору акаунта було закрите', 'info');
+      } else if (err.code === 'auth/cancelled-popup-request') {
+        // Ignored
       } else {
-        // Fallback to Google Auth Modal selector for preview / iframe environments
-        setIsAuthModalOpen(true);
+        showToast('Помилка авторизації: ' + (err?.message || 'Спробуйте ще раз'), 'error');
       }
     } finally {
       setIsAuthLoading(false);
-    }
-  };
-
-  const handleSelectAccount = (user: BioUser) => {
-    setCurrentUser(user);
-    if (user.isAdmin) {
-      showToast('👑 Ласкаво просимо, Головний Адміністратор (NEXUS)!', 'success');
-    } else {
-      showToast(`Ви увійшли як ${user.name} (${user.email}). Доступ надано.`, 'success');
     }
   };
 
@@ -735,13 +725,6 @@ export default function App() {
           adminEmail={ADMIN_EMAIL}
         />
       )}
-
-      {/* GOOGLE AUTH MODAL (ACCOUNT SELECTOR & FALLBACK) */}
-      <GoogleAuthModal
-        isOpen={isAuthModalOpen}
-        onClose={() => setIsAuthModalOpen(false)}
-        onSelectAccount={handleSelectAccount}
-      />
     </div>
   );
 }

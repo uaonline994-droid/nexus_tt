@@ -2,14 +2,41 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    // NEXUS Profile Document (Open read and write for live sync)
-    match /nexus_profile/{profileId} {
-      allow read, write: if true;
+    
+    // Helper: Checks if user is authenticated and verified as Master Admin
+    function isMasterAdmin() {
+      return request.auth != null && 
+             request.auth.token.email == "a60840397@gmail.com";
     }
 
-    // Default safety fallback
+    // Helper: Checks if user is authenticated
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Public NEXUS Profile: Anyone can view, only Master Admin can write
+    match /nexus_profile/{profileId} {
+      allow read: if true;
+      allow write: if isMasterAdmin();
+    }
+
+    // Security Incidents: Master Admin full access, automated system write
+    match /security_incidents/{incidentId} {
+      allow read: if isMasterAdmin();
+      allow create: if true;
+      allow update, delete: if isMasterAdmin();
+    }
+
+    // Moderation & Banned List: Anyone can read status, only Master Admin can manage bans
+    match /moderation/{docId} {
+      allow read: if true;
+      allow write: if isMasterAdmin();
+    }
+
+    // Fallback: Default safe read for all, write for Master Admin
     match /{document=**} {
-      allow read, write: if true;
+      allow read: if true;
+      allow write: if isMasterAdmin();
     }
   }
 }
