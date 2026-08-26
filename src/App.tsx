@@ -41,6 +41,7 @@ import {
   checkUserWebRoomAccess,
   DEFAULT_WEB_ROOM_SETTINGS
 } from './chatService';
+import { isMasterAdmin, reportSecurityIntrusion, MASTER_ADMIN_EMAIL } from './securityService';
 import { sanitizeProfilePayload } from './security';
 import { soundService } from './soundService';
 import { StatsSection } from './components/StatsSection';
@@ -129,7 +130,7 @@ export default function App() {
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (user && user.email) {
-        const userIsAdmin = user.email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
+        const userIsAdmin = isMasterAdmin(user.email);
         setCurrentUser({
           id: user.uid,
           name: user.displayName || user.email.split('@')[0],
@@ -173,16 +174,17 @@ export default function App() {
     return () => unsubscribeSettings();
   }, []);
 
-  // Google Sign In
+  // Google Sign In (Standard account picker with prompt: 'select_account')
   const handleGoogleSignInClick = async () => {
     setIsAuthLoading(true);
     soundService.playClickSound();
     try {
+      googleProvider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
       if (user && user.email) {
-        const userIsAdmin = user.email.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
+        const userIsAdmin = isMasterAdmin(user.email);
         setCurrentUser({
           id: user.uid,
           name: user.displayName || user.email.split('@')[0],
@@ -192,25 +194,19 @@ export default function App() {
         });
 
         if (userIsAdmin) {
-          showToast('Ласкаво просимо, NEXUS! Права адміністратора активовано.', 'success');
+          showToast('👑 Ласкаво просимо, Головний Адміністратор! Повний доступ активовано.', 'success');
         } else {
-          showToast(`Ви увійшли як ${user.displayName || user.email}. Тепер ви можете спілкуватися в чаті!`, 'success');
+          showToast(`Ви увійшли як ${user.displayName || user.email}. Доступ до чату та кімнат надано.`, 'success');
         }
       }
     } catch (err: any) {
       console.error('Firebase Auth error:', err);
       if (err.code === 'auth/popup-closed-by-user') {
-        showToast('Вікно авторизації було закрите', 'info');
+        showToast('Вікно вибору акаунта Google було закрите', 'info');
+      } else if (err.code === 'auth/popup-blocked') {
+        showToast('Браузер заблокував спливаюче вікно Google. Будь ласка, дозвольте pop-up.', 'error');
       } else {
-        // Fallback demo admin activation if network popup domain issue
-        setCurrentUser({
-          id: 'admin_nexus',
-          name: 'NEXUS',
-          email: ADMIN_EMAIL,
-          avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80',
-          isAdmin: true
-        });
-        showToast('Режим швидкого доступу активовано для ' + ADMIN_EMAIL, 'success');
+        showToast('Помилка авторизації Google: ' + (err?.message || 'Спробуйте ще раз'), 'error');
       }
     } finally {
       setIsAuthLoading(false);
@@ -232,6 +228,21 @@ export default function App() {
 
   // Save profile changes (Cloud Firestore + RTDB + LocalStorage)
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
+    // Strict Security Guard: Only MASTER_ADMIN can modify profile data
+    if (!isMasterAdmin(currentUser?.email)) {
+      await reportSecurityIntrusion(
+        currentUser || { email: 'unauthorized_guest@blocked.net', name: 'Гість' },
+        {
+          location: 'Database / handleSaveProfile',
+          attemptedAction: 'Пряма спроба модифікації контенту профілю або бази даних',
+          reason: `Користувач (${currentUser?.email || 'неавторизований'}) спробував зберегти дані профілю, не будучи master admin (${MASTER_ADMIN_EMAIL})`,
+          vulnerabilityAnalysis: 'Спроба виклику saveProfileToDatabase без прав головного адміністратора. Доступ заблоковано.'
+        }
+      );
+      showToast('⛔ Спроба несанкціонованого доступу! Ваш акаунт заблоковано системою безпеки.', 'error');
+      throw new Error('Unauthorized profile modification attempt detected.');
+    }
+
     try {
       const sanitized = sanitizeProfilePayload(updatedData);
       const result = await saveProfileToDatabase(sanitized);
@@ -251,15 +262,26 @@ export default function App() {
 
   // Quick Stat Edit Handler
   const handleQuickStatClick = (statKey: 'followers' | 'likes' | 'views') => {
-    if (!currentUser?.isAdmin) {
-      showToast('Тільки адміністратор (a60840397@gmail.com) може змінювати статистику. Увійдіть через Google.', 'info');
-      handleGoogleSignInClick();
+    if (!isMasterAdmin(currentUser?.email)) {
+      if (currentUser?.email) {
+        reportSecurityIntrusion(
+          currentUser,
+          {
+            location: 'StatsSection / handleQuickStatClick',
+            attemptedAction: `Спроба редагування статистики [${statKey}]`,
+            reason: `Спроба зміни лічильників з пошти ${currentUser.email}`,
+            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickStatModal.'
+          }
+        );
+      }
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може змінювати статистику.`, 'error');
       return;
     }
     setQuickStatKey(statKey);
   };
 
   const handleSaveQuickStat = async (statKey: 'followers' | 'likes' | 'views', newValue: string) => {
+    if (!isMasterAdmin(currentUser?.email)) return;
     const updatedStats = {
       ...profile.stats,
       [statKey]: newValue
@@ -269,15 +291,26 @@ export default function App() {
 
   // Quick News Add Handler
   const handleQuickAddNewsClick = () => {
-    if (!currentUser?.isAdmin) {
-      showToast('Тільки адміністратор може додавати новини. Увійдіть через Google.', 'info');
-      handleGoogleSignInClick();
+    if (!isMasterAdmin(currentUser?.email)) {
+      if (currentUser?.email) {
+        reportSecurityIntrusion(
+          currentUser,
+          {
+            location: 'NewsSection / handleQuickAddNewsClick',
+            attemptedAction: 'Спроба додавання новини',
+            reason: `Спроба додавання новини з пошти ${currentUser.email}`,
+            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAddNewsModal.'
+          }
+        );
+      }
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати новини.`, 'error');
       return;
     }
     setIsQuickAddNewsOpen(true);
   };
 
   const handleSaveQuickNews = async (newsItem: NewsPost) => {
+    if (!isMasterAdmin(currentUser?.email)) return;
     const currentNews = profile.news || [];
     const updatedNews = [newsItem, ...currentNews];
     await handleSaveProfile({ news: updatedNews });
@@ -285,15 +318,26 @@ export default function App() {
 
   // Quick Link Add Handler
   const handleQuickAddLinkClick = () => {
-    if (!currentUser?.isAdmin) {
-      showToast('Тільки адміністратор може додавати посилання. Увійдіть через Google.', 'info');
-      handleGoogleSignInClick();
+    if (!isMasterAdmin(currentUser?.email)) {
+      if (currentUser?.email) {
+        reportSecurityIntrusion(
+          currentUser,
+          {
+            location: 'LinksList / handleQuickAddLinkClick',
+            attemptedAction: 'Спроба додавання посилання',
+            reason: `Спроба додавання посилання з пошти ${currentUser.email}`,
+            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAddLinkModal.'
+          }
+        );
+      }
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати посилання.`, 'error');
       return;
     }
     setIsQuickAddLinkOpen(true);
   };
 
   const handleSaveQuickLink = async (linkItem: BioLink) => {
+    if (!isMasterAdmin(currentUser?.email)) return;
     const currentLinks = profile.links || [];
     const updatedLinks = [...currentLinks, linkItem];
     await handleSaveProfile({ links: updatedLinks });
@@ -301,8 +345,19 @@ export default function App() {
 
   // Quick Avatar Click Handler
   const handleAvatarClick = () => {
-    if (!currentUser?.isAdmin) {
-      showToast('Тільки адміністратор може змінювати аватарку.', 'info');
+    if (!isMasterAdmin(currentUser?.email)) {
+      if (currentUser?.email) {
+        reportSecurityIntrusion(
+          currentUser,
+          {
+            location: 'AvatarSection / handleAvatarClick',
+            attemptedAction: 'Спроба заміни аватарки профілю',
+            reason: `Спроба зміни фото з пошти ${currentUser.email}`,
+            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAvatarModal.'
+          }
+        );
+      }
+      showToast('Тільки головний адміністратор може змінювати аватарку.', 'error');
       return;
     }
     soundService.playClickSound();
@@ -310,6 +365,7 @@ export default function App() {
   };
 
   const handleSaveAvatar = async (newUrl: string) => {
+    if (!isMasterAdmin(currentUser?.email)) return;
     await handleSaveProfile({ avatarUrl: newUrl });
   };
 

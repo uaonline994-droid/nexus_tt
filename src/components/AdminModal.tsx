@@ -50,6 +50,13 @@ import {
   DEFAULT_CHAT_SETTINGS,
   DEFAULT_WEB_ROOM_SETTINGS
 } from '../chatService';
+import { 
+  isMasterAdmin, 
+  subscribeToSecurityIncidents, 
+  reportSecurityIntrusion, 
+  SecurityIncident, 
+  MASTER_ADMIN_EMAIL 
+} from '../securityService';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -90,16 +97,37 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   const [modReason, setModReason] = useState('');
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
 
-  // Subscribe to real-time settings when opened
+  // Security Incident Audit Logs
+  const [securityIncidents, setSecurityIncidents] = useState<SecurityIncident[]>([]);
+
+  // Guard: Auto-eject and auto-ban non-master-admins
+  useEffect(() => {
+    if (isOpen && !isMasterAdmin(adminEmail)) {
+      onClose();
+      reportSecurityIntrusion(
+        { email: adminEmail || 'unauthorized_intruder@blocked.net', name: 'Intruder' },
+        {
+          location: 'AdminModal / Component Mount',
+          attemptedAction: 'Несанкціоноване відкриття або інспекція модального вікна AdminModal',
+          reason: `Пошта [${adminEmail}] не відповідає головному адміністратору (${MASTER_ADMIN_EMAIL})`,
+          vulnerabilityAnalysis: 'Спроба відкриття адмінського інтерфейсу без авторизації довіреного акаунта.'
+        }
+      );
+    }
+  }, [isOpen, adminEmail, onClose]);
+
+  // Subscribe to real-time settings and security incidents when opened
   useEffect(() => {
     if (!isOpen) return;
     const unsubWeb = subscribeToWebRoomSettings((ws) => setWebRoomSettings(ws));
     const unsubChat = subscribeToChatSettings((cs) => setChatSettings(cs));
     const unsubMod = subscribeToModerationState((ms) => setModerationState(ms));
+    const unsubSec = subscribeToSecurityIncidents((incidents) => setSecurityIncidents(incidents));
     return () => {
       unsubWeb();
       unsubChat();
       unsubMod();
+      unsubSec();
     };
   }, [isOpen]);
 
@@ -1549,14 +1577,14 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-bold uppercase text-emerald-800 tracking-wider flex items-center gap-2">
                     <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                    Багаторівневий Захист NEXUS Bio
+                    Багаторівневий Захист NEXUS & Автобан
                   </span>
                   <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-600 text-white px-2.5 py-0.5 rounded-full">
-                    Active Shield
+                    Active Shield 2.0
                   </span>
                 </div>
                 <p className="text-[11px] text-emerald-950/80 leading-relaxed">
-                  Система використовує Google OAuth 2.0, Firestore Security Rules та протокол санітизації ін'єкцій.
+                  Будь-яка спроба несанкціонованого доступу або виклику функцій адмін-панелі користувачем, відмінним від <strong className="text-emerald-900">{MASTER_ADMIN_EMAIL}</strong>, миттєво блокується автоматичною системою безпеки з довічним баном та записом у журнал інцидентів.
                 </p>
               </div>
 
@@ -1565,31 +1593,89 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5 uppercase">
                       <Lock className="w-3.5 h-3.5 text-indigo-600" />
-                      1. Google OAuth 2.0
+                      1. Master Admin Email
                     </span>
                     <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase">
-                      Pass
+                      Strict Pass
                     </span>
                   </div>
                   <p className="text-[10.5px] text-slate-500 leading-normal">
-                    Доступ закріплено за поштою <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-bold">{adminEmail}</code>.
+                    Права адміна закріплено суворо за: <code className="bg-slate-100 px-1 py-0.5 rounded text-indigo-600 font-bold">{MASTER_ADMIN_EMAIL}</code>.
                   </p>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs space-y-1.5">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-bold text-slate-800 flex items-center gap-1.5 uppercase">
-                      <Key className="w-3.5 h-3.5 text-blue-600" />
-                      2. Cloud Firestore Rules
+                      <ShieldAlert className="w-3.5 h-3.5 text-rose-600" />
+                      2. Intrusion Auto-Ban
                     </span>
-                    <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md uppercase">
-                      Active
+                    <span className="text-[9px] font-bold text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md uppercase">
+                      Enabled
                     </span>
                   </div>
                   <p className="text-[10.5px] text-slate-500 leading-normal">
-                    Глобальна хмарна реплікація з миттєвою доставкою даних відвідувачам.
+                    Автоматичний бан при спробі зламу, модифікації бази чи підробки прав.
                   </p>
                 </div>
+              </div>
+
+              {/* SECURITY INCIDENTS AUDIT LOG TABLE */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                    Журнал Спроб Несанкціонованого Доступу ({securityIncidents.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Realtime Security Feed
+                  </span>
+                </div>
+
+                {securityIncidents.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/60 text-center space-y-1">
+                    <ShieldCheck className="w-6 h-6 text-emerald-500 mx-auto" />
+                    <p className="text-xs font-semibold text-slate-700">Жодних інцидентів або спроб зламу не виявлено</p>
+                    <p className="text-[10.5px] text-slate-400">Система захисту активна і контролює всі точки входу.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                    {securityIncidents.map((incident) => (
+                      <div 
+                        key={incident.id}
+                        className="p-3 rounded-xl bg-rose-50/70 border border-rose-200 text-xs space-y-1.5 font-sans"
+                      >
+                        <div className="flex items-center justify-between flex-wrap gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <Ban className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                            <span className="font-bold text-rose-900 font-mono text-[11px]">{incident.intruderEmail}</span>
+                            {incident.intruderName && incident.intruderName !== incident.intruderEmail && (
+                              <span className="text-[10px] text-slate-500 font-normal">({incident.intruderName})</span>
+                            )}
+                          </div>
+                          <span className="text-[9.5px] font-black uppercase tracking-wider bg-rose-600 text-white px-2 py-0.5 rounded-full">
+                            AUTO-BANNED
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[10.5px] text-slate-700 bg-white/80 p-2 rounded-lg border border-rose-100 font-mono">
+                          <div>
+                            <span className="text-slate-400">📍 Місце спроби:</span> <span className="font-semibold text-slate-800">{incident.location}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">⚡ Дія:</span> <span className="font-semibold text-rose-700">{incident.attemptedAction}</span>
+                          </div>
+                          <div className="col-span-full">
+                            <span className="text-slate-400">🛑 Причина:</span> <span className="text-slate-800">{incident.reason}</span>
+                          </div>
+                          <div className="col-span-full text-[10px] text-slate-500">
+                            <span className="text-slate-400">🕒 Час:</span> {new Date(incident.timestamp).toLocaleString('uk-UA')}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}

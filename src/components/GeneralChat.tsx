@@ -22,7 +22,7 @@ import {
   checkUserChatAccess,
   DEFAULT_CHAT_SETTINGS
 } from '../chatService';
-import { ADMIN_EMAIL } from '../firebase';
+import { isMasterAdmin, MASTER_ADMIN_EMAIL } from '../securityService';
 import { soundService } from '../soundService';
 
 interface GeneralChatProps {
@@ -76,7 +76,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   }, []);
 
   const userEmailLower = currentUser?.email?.toLowerCase().trim() || '';
-  const isAdmin = Boolean(currentUser?.isAdmin || userEmailLower === ADMIN_EMAIL.toLowerCase().trim());
+  const isAdmin = Boolean(currentUser && isMasterAdmin(currentUser.email));
 
   // Check real-time access
   const accessCheck = useMemo(() => {
@@ -440,7 +440,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       >
         {visibleMessages.map((msg) => {
           const isMyMsg = currentUser && (msg.senderEmail.toLowerCase() === userEmailLower);
-          const isNexusAdmin = msg.isAdmin || msg.senderEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+          const isNexusAdmin = msg.isAdmin || msg.senderEmail.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase();
           const isRoomInvite = msg.type === 'web_room_invite';
           const isPrivateRoom = msg.roomData?.isPrivate;
           const isHighlighted = highlightedMsgId === msg.id;
