@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { rtdb, ref, rtdbSet, rtdbOnValue } from './firebase';
+import { rtdb, ref, rtdbSet, rtdbOnValue, onDisconnect } from './firebase';
 
 export interface PeerInfo {
   id: string;
@@ -130,10 +130,13 @@ export class WebRTCManager {
       console.warn('Server room join warning:', e);
     }
 
-    // 4. Firebase RTDB presence & signaling fallback
+    // 4. Firebase RTDB presence & signaling queue fallback
     try {
       const myPeerRef = ref(rtdb, `nexus_rooms/${this.roomId}/peers/${this.localPeer.id}`);
       await rtdbSet(myPeerRef, this.localPeer);
+      try {
+        onDisconnect(myPeerRef).remove();
+      } catch (e) {}
 
       const peersRef = ref(rtdb, `nexus_rooms/${this.roomId}/peers`);
       this.unsubscribePeersRtdb = rtdbOnValue(peersRef, async (snapshot) => {
@@ -160,12 +163,19 @@ export class WebRTCManager {
         if (!this.isJoined) return;
         if (snapshot.exists()) {
           const val = snapshot.val();
-          if (val) {
-            for (const [fromPeerId, signalData] of Object.entries<any>(val)) {
-              if (!signalData) continue;
-              await this.handleIncomingSignal(fromPeerId, signalData);
+          if (val && typeof val === 'object') {
+            const entries = Object.entries<any>(val);
+            // Sort by timestamp
+            entries.sort((a, b) => (a[1]?.timestamp || 0) - (b[1]?.timestamp || 0));
+            for (const [sigKey, sigItem] of entries) {
+              if (!sigItem) continue;
+              const fromPeerId = sigItem.fromPeerId;
+              const signalData = sigItem.signal || sigItem;
+              if (fromPeerId && signalData) {
+                await this.handleIncomingSignal(fromPeerId, signalData);
+              }
               try {
-                const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${this.localPeer.id}/${fromPeerId}`);
+                const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${this.localPeer.id}/${sigKey}`);
                 await rtdbSet(sigRef, null);
               } catch (e) {}
             }
@@ -268,10 +278,15 @@ export class WebRTCManager {
           }).catch(() => {});
         } catch (e) {}
 
-        // RTDB signaling fallback
+        // RTDB signaling queue
         try {
-          const candRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${remotePeerId}/${this.localPeer.id}`);
-          rtdbSet(candRef, candidatePayload).catch(() => {});
+          const sigKey = 'sig_cand_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+          const candRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${remotePeerId}/${sigKey}`);
+          rtdbSet(candRef, {
+            fromPeerId: this.localPeer.id,
+            signal: candidatePayload,
+            timestamp: Date.now()
+          }).catch(() => {});
         } catch (e) {}
       }
     };
@@ -310,10 +325,15 @@ export class WebRTCManager {
         })
       }).catch(() => {});
 
-      // RTDB signal
+      // RTDB signal queue
       try {
-        const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${remotePeerId}/${this.localPeer.id}`);
-        rtdbSet(sigRef, signalPayload).catch(() => {});
+        const sigKey = 'sig_offer_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+        const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${remotePeerId}/${sigKey}`);
+        rtdbSet(sigRef, {
+          fromPeerId: this.localPeer.id,
+          signal: signalPayload,
+          timestamp: Date.now()
+        }).catch(() => {});
       } catch (e) {}
     } catch (e) {
       console.warn('Initiate call error:', e);
@@ -359,10 +379,15 @@ export class WebRTCManager {
           })
         }).catch(() => {});
 
-        // RTDB signal
+        // RTDB signal queue
         try {
-          const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${fromPeerId}/${this.localPeer.id}`);
-          rtdbSet(sigRef, answerSignal).catch(() => {});
+          const sigKey = 'sig_answer_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7);
+          const sigRef = ref(rtdb, `nexus_rooms/${this.roomId}/signals/${fromPeerId}/${sigKey}`);
+          rtdbSet(sigRef, {
+            fromPeerId: this.localPeer.id,
+            signal: answerSignal,
+            timestamp: Date.now()
+          }).catch(() => {});
         } catch (e) {}
       } else if (signal.type === 'answer' && signal.sdp) {
         if (pc.signalingState === 'have-local-offer') {

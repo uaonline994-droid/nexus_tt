@@ -707,6 +707,7 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
           ref={videoRef}
           autoPlay
           playsInline
+          muted
           className="w-full h-full object-cover"
         />
       ) : (

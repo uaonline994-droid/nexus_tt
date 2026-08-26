@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ref, rtdbSet, rtdbGet, rtdbOnValue, doc, setDoc, onSnapshot } from './firebase';
+import { ref, rtdbSet, rtdbGet, rtdbOnValue, doc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, limit } from './firebase';
 import { db, rtdb, ADMIN_EMAIL } from './firebase';
 import { ChatMessage, ChatModerationState, ChatSettings, WebRoomSettings } from './types';
 
@@ -349,7 +349,7 @@ export function subscribeToModerationState(onUpdate: (state: ChatModerationState
 }
 
 /**
- * Subscribe to live chat messages (Server SSE + Polling + Firestore + RTDB)
+ * Subscribe to live chat messages (Server SSE + Polling + Firestore onSnapshot + Realtime Database onValue)
  * Ensures 1 unified chat where every message from anyone is visible to everyone in real time!
  */
 export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => void): () => void {
@@ -369,7 +369,54 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
   // Immediate local emit
   onUpdate(currentMessages);
 
-  // 1. Initial & Recurring Server REST Polling (Guaranteed Delivery)
+  // 1. Firestore onSnapshot Continuous Real-Time Listener
+  let unsubscribeFirestore: (() => void) | null = null;
+  try {
+    const chatCollectionRef = collection(db, 'nexus_chat_messages');
+    const chatQuery = query(chatCollectionRef, orderBy('timestamp', 'asc'), limit(200));
+    unsubscribeFirestore = onSnapshot(chatQuery, (snapshot) => {
+      if (!isSubscribed) return;
+      const list: ChatMessage[] = [];
+      snapshot.forEach((docSnap) => {
+        const val = docSnap.data() as ChatMessage;
+        if (val && val.id) {
+          list.push(val);
+        }
+      });
+      if (list.length > 0) {
+        handleUpdate(list);
+      }
+    }, (err) => {
+      console.warn('Firestore onSnapshot listener notice:', err);
+    });
+  } catch (err) {
+    console.warn('Firestore query error:', err);
+  }
+
+  // 2. Realtime Database onValue Continuous Real-Time Listener
+  let unsubscribeRtdb: (() => void) | null = null;
+  try {
+    const dbRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
+    unsubscribeRtdb = rtdbOnValue(dbRef, (snapshot) => {
+      if (!isSubscribed) return;
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        if (val) {
+          let list: ChatMessage[] = [];
+          if (Array.isArray(val)) {
+            list = val.filter(Boolean);
+          } else if (typeof val === 'object') {
+            list = Object.values(val) as ChatMessage[];
+          }
+          if (list.length > 0) {
+            handleUpdate(list);
+          }
+        }
+      }
+    });
+  } catch (e) {}
+
+  // 3. Initial & Recurring Server REST Polling (Guaranteed Delivery across all networks)
   const fetchServerMessages = async () => {
     try {
       const res = await fetch('/api/chat/messages');
@@ -383,7 +430,7 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
   fetchServerMessages();
   const pollInterval = setInterval(fetchServerMessages, 2500);
 
-  // 2. Server-Sent Events (SSE) for instant cross-device live push
+  // 4. Server-Sent Events (SSE) for instant cross-device live push
   let eventSource: EventSource | null = null;
   const connectSSE = () => {
     try {
@@ -413,39 +460,12 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
           }
         } catch (err) {}
       };
-
-      eventSource.onerror = () => {
-        // SSE will auto-retry, polling will handle it in the meantime
-      };
     } catch (e) {}
   };
 
   connectSSE();
 
-  // 3. RTDB Listener
-  let unsubscribeRtdb: (() => void) | null = null;
-  try {
-    const dbRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
-    unsubscribeRtdb = rtdbOnValue(dbRef, (snapshot) => {
-      if (!isSubscribed) return;
-      if (snapshot.exists()) {
-        const val = snapshot.val();
-        if (val) {
-          let list: ChatMessage[] = [];
-          if (Array.isArray(val)) {
-            list = val.filter(Boolean);
-          } else if (typeof val === 'object') {
-            list = Object.values(val) as ChatMessage[];
-          }
-          if (list.length > 0) {
-            handleUpdate(list);
-          }
-        }
-      }
-    });
-  } catch (e) {}
-
-  // 4. Cross-tab BroadcastChannel & Local Events
+  // 5. Cross-tab BroadcastChannel & Local Events
   let broadcastChannel: BroadcastChannel | null = null;
   try {
     broadcastChannel = new BroadcastChannel('nexus_global_chat_channel');
@@ -480,6 +500,7 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
     if (broadcastChannel) {
       broadcastChannel.close();
     }
+    if (unsubscribeFirestore) unsubscribeFirestore();
     if (unsubscribeRtdb) unsubscribeRtdb();
     if (typeof window !== 'undefined') {
       window.removeEventListener('nexus_chat_local_update', handleLocalEvent);
@@ -606,6 +627,11 @@ export async function deleteChatMessage(messageId: string): Promise<boolean> {
     await rtdbSet(messageRef, null);
   } catch (err) {}
 
+  try {
+    const docRef = doc(db, 'nexus_chat_messages', messageId);
+    await deleteDoc(docRef);
+  } catch (err) {}
+
   return true;
 }
 
@@ -630,6 +656,13 @@ export async function clearAllChatMessages(): Promise<boolean> {
       initialObj[m.id] = m;
     });
     await rtdbSet(chatRef, initialObj);
+  } catch (err) {}
+
+  try {
+    for (const msg of INITIAL_MESSAGES) {
+      const docRef = doc(db, 'nexus_chat_messages', msg.id);
+      await setDoc(docRef, msg);
+    }
   } catch (err) {}
 
   return true;

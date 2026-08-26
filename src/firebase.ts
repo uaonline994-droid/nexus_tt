@@ -1,8 +1,31 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged, type User } from "firebase/auth";
-import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
-import { getDatabase, ref, set as rtdbSet, get as rtdbGet, onValue as rtdbOnValue } from "firebase/database";
-import firebaseAppletConfig from "../firebase-applet-config.json";
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc, 
+  onSnapshot, 
+  collection, 
+  query, 
+  orderBy, 
+  limit, 
+  addDoc, 
+  deleteDoc, 
+  serverTimestamp 
+} from "firebase/firestore";
+import { 
+  getDatabase, 
+  ref, 
+  set as rtdbSet, 
+  get as rtdbGet, 
+  onValue as rtdbOnValue, 
+  push as rtdbPush, 
+  remove as rtdbRemove, 
+  onDisconnect, 
+  child, 
+  off as rtdbOff 
+} from "firebase/database";
 
 export const ADMIN_EMAIL = "a60840397@gmail.com";
 
@@ -32,11 +55,23 @@ export {
   setDoc, 
   getDoc, 
   onSnapshot, 
+  collection,
+  query,
+  orderBy,
+  limit,
+  addDoc,
+  deleteDoc,
+  serverTimestamp,
   getDatabase, 
   ref, 
   rtdbSet, 
   rtdbGet, 
   rtdbOnValue, 
+  rtdbPush,
+  rtdbRemove,
+  onDisconnect,
+  child,
+  rtdbOff,
   type User 
 };
 
