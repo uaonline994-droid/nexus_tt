@@ -227,18 +227,18 @@ export default function App() {
 
   // Save profile changes (Cloud Firestore + RTDB + LocalStorage)
   const handleSaveProfile = async (updatedData: Partial<BioProfile>) => {
-    // Strict Security Guard: Only MASTER_ADMIN can modify profile data
+    // Strict Security Guard: Only MASTER_ADMIN can modify profile data in the database
     if (!isMasterAdmin(currentUser?.email)) {
       await reportSecurityIntrusion(
-        currentUser || { email: 'unauthorized_guest@blocked.net', name: 'Гість' },
+        currentUser || { email: 'unauthorized_intruder@blocked.net', name: 'Intruder' },
         {
-          location: 'Database / handleSaveProfile',
-          attemptedAction: 'Пряма спроба модифікації контенту профілю або бази даних',
-          reason: `Користувач (${currentUser?.email || 'неавторизований'}) спробував зберегти дані профілю, не будучи master admin (${MASTER_ADMIN_EMAIL})`,
-          vulnerabilityAnalysis: 'Спроба виклику saveProfileToDatabase без прав головного адміністратора. Доступ заблоковано.'
+          location: 'Database Security Shield (handleSaveProfile)',
+          attemptedAction: 'Несанкціонована спроба запису / модифікації бази даних',
+          reason: `Користувач (${currentUser?.email || 'неавторизований'}) спробував зберегти дані в базу, не будучи головним адміністратором (${MASTER_ADMIN_EMAIL})`,
+          vulnerabilityAnalysis: 'Спроба модифікації бази даних в обхід прав адміністратора. Спробу заблоковано, акаунт внесено в бан.'
         }
       );
-      showToast('⛔ Спроба несанкціонованого доступу! Ваш акаунт заблоковано системою безпеки.', 'error');
+      showToast('⛔ Спроба несанкціонованої модифікації бази заблокована! Користувача заблоковано.', 'error');
       throw new Error('Unauthorized profile modification attempt detected.');
     }
 
@@ -262,18 +262,7 @@ export default function App() {
   // Quick Stat Edit Handler
   const handleQuickStatClick = (statKey: 'followers' | 'likes' | 'views') => {
     if (!isMasterAdmin(currentUser?.email)) {
-      if (currentUser?.email) {
-        reportSecurityIntrusion(
-          currentUser,
-          {
-            location: 'StatsSection / handleQuickStatClick',
-            attemptedAction: `Спроба редагування статистики [${statKey}]`,
-            reason: `Спроба зміни лічильників з пошти ${currentUser.email}`,
-            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickStatModal.'
-          }
-        );
-      }
-      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може змінювати статистику.`, 'error');
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може змінювати статистику.`, 'info');
       return;
     }
     setQuickStatKey(statKey);
@@ -291,18 +280,7 @@ export default function App() {
   // Quick News Add Handler
   const handleQuickAddNewsClick = () => {
     if (!isMasterAdmin(currentUser?.email)) {
-      if (currentUser?.email) {
-        reportSecurityIntrusion(
-          currentUser,
-          {
-            location: 'NewsSection / handleQuickAddNewsClick',
-            attemptedAction: 'Спроба додавання новини',
-            reason: `Спроба додавання новини з пошти ${currentUser.email}`,
-            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAddNewsModal.'
-          }
-        );
-      }
-      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати новини.`, 'error');
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати новини.`, 'info');
       return;
     }
     setIsQuickAddNewsOpen(true);
@@ -318,18 +296,7 @@ export default function App() {
   // Quick Link Add Handler
   const handleQuickAddLinkClick = () => {
     if (!isMasterAdmin(currentUser?.email)) {
-      if (currentUser?.email) {
-        reportSecurityIntrusion(
-          currentUser,
-          {
-            location: 'LinksList / handleQuickAddLinkClick',
-            attemptedAction: 'Спроба додавання посилання',
-            reason: `Спроба додавання посилання з пошти ${currentUser.email}`,
-            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAddLinkModal.'
-          }
-        );
-      }
-      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати посилання.`, 'error');
+      showToast(`Тільки головний адміністратор (${MASTER_ADMIN_EMAIL}) може додавати посилання.`, 'info');
       return;
     }
     setIsQuickAddLinkOpen(true);
@@ -345,18 +312,7 @@ export default function App() {
   // Quick Avatar Click Handler
   const handleAvatarClick = () => {
     if (!isMasterAdmin(currentUser?.email)) {
-      if (currentUser?.email) {
-        reportSecurityIntrusion(
-          currentUser,
-          {
-            location: 'AvatarSection / handleAvatarClick',
-            attemptedAction: 'Спроба заміни аватарки профілю',
-            reason: `Спроба зміни фото з пошти ${currentUser.email}`,
-            vulnerabilityAnalysis: 'Несанкціоноване відкриття QuickAvatarModal.'
-          }
-        );
-      }
-      showToast('Тільки головний адміністратор може змінювати аватарку.', 'error');
+      showToast('Тільки головний адміністратор (NEXUS) може змінювати аватарку.', 'info');
       return;
     }
     soundService.playClickSound();

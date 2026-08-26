@@ -100,19 +100,10 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   // Security Incident Audit Logs
   const [securityIncidents, setSecurityIncidents] = useState<SecurityIncident[]>([]);
 
-  // Guard: Auto-eject and auto-ban non-master-admins
+  // Guard: Auto-eject non-master-admins if modal is somehow opened
   useEffect(() => {
     if (isOpen && !isMasterAdmin(adminEmail)) {
       onClose();
-      reportSecurityIntrusion(
-        { email: adminEmail || 'unauthorized_intruder@blocked.net', name: 'Intruder' },
-        {
-          location: 'AdminModal / Component Mount',
-          attemptedAction: 'Несанкціоноване відкриття або інспекція модального вікна AdminModal',
-          reason: `Пошта [${adminEmail}] не відповідає головному адміністратору (${MASTER_ADMIN_EMAIL})`,
-          vulnerabilityAnalysis: 'Спроба відкриття адмінського інтерфейсу без авторизації довіреного акаунта.'
-        }
-      );
     }
   }, [isOpen, adminEmail, onClose]);
 

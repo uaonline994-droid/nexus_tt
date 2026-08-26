@@ -22,10 +22,10 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Permissions-Policy', 'camera=*, microphone=*, display-capture=*');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com https://*.firebaseio.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; connect-src 'self' https: wss:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com;"
+    "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://accounts.google.com https://apis.google.com https://*.firebaseio.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; media-src 'self' blob: data: https: http:; connect-src 'self' https: wss:; frame-src 'self' https://accounts.google.com https://*.firebaseapp.com;"
   );
   next();
 });
@@ -139,11 +139,181 @@ function sanitizeUrlProtocol(url: any, fallback = 'https://tiktok.com'): string 
 }
 
 // ==========================================
-// 5. DATABASE PERSISTENCE
+// 5. DATABASE & CHAT PERSISTENCE
 // ==========================================
 const DATA_DIR = path.join(process.cwd(), 'data');
 const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
+const CHAT_FILE = path.join(DATA_DIR, 'chat_messages.json');
+const CHAT_SETTINGS_FILE = path.join(DATA_DIR, 'chat_settings.json');
+const CHAT_MODERATION_FILE = path.join(DATA_DIR, 'chat_moderation.json');
 const ADMIN_EMAIL = "a60840397@gmail.com";
+
+const INITIAL_CHAT_MESSAGES = [
+  {
+    id: 'msg_welcome_1',
+    senderId: 'admin_nexus',
+    senderName: 'NEXUS',
+    senderEmail: ADMIN_EMAIL,
+    senderAvatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80',
+    isAdmin: true,
+    text: 'Привіт усім! 👋 Ласкаво просимо до офіційного Загального Чату NEXUS! Тут ви можете спілкуватися, обговорювати відео та тегати мене через кнопку "Написати Nexus tt".',
+    timestamp: Date.now() - 3600000,
+    mentionsAdmin: false
+  },
+  {
+    id: 'msg_welcome_2',
+    senderId: 'system',
+    senderName: 'NEXUS Bot',
+    senderEmail: 'bot@nexus.tt',
+    senderAvatar: 'https://images.unsplash.com/photo-1614680376593-902f749f7ffc?w=400&auto=format&fit=crop&q=80',
+    isAdmin: false,
+    text: '🛡️ Правила чату: повага один до одного, заборонено спам. Звичайні користувачі можуть надсилати повідомлення згідно з налаштуваннями адміністратора. Для тегу адміна пишіть @nexus.',
+    timestamp: Date.now() - 1800000,
+    mentionsAdmin: false
+  }
+];
+
+function getChatMessages(): any[] {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!fs.existsSync(CHAT_FILE)) {
+      fs.writeFileSync(CHAT_FILE, JSON.stringify(INITIAL_CHAT_MESSAGES, null, 2), 'utf-8');
+      return INITIAL_CHAT_MESSAGES;
+    }
+    const raw = fs.readFileSync(CHAT_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : INITIAL_CHAT_MESSAGES;
+  } catch (err) {
+    console.error('Chat read error:', err);
+    return INITIAL_CHAT_MESSAGES;
+  }
+}
+
+function saveChatMessages(messages: any[]): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(CHAT_FILE, JSON.stringify(messages, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Chat write error:', err);
+    return false;
+  }
+}
+
+function getChatSettings(): any {
+  const defaultSettings = {
+    isChatOpenForAll: true,
+    isReadOnly: false,
+    whitelistOnly: false,
+    allowedChatEmails: [ADMIN_EMAIL.toLowerCase()],
+    slowmodeSeconds: 300
+  };
+  try {
+    if (!fs.existsSync(CHAT_SETTINGS_FILE)) {
+      return defaultSettings;
+    }
+    const raw = fs.readFileSync(CHAT_SETTINGS_FILE, 'utf-8');
+    return { ...defaultSettings, ...JSON.parse(raw) };
+  } catch (e) {
+    return defaultSettings;
+  }
+}
+
+function saveChatSettings(settings: any): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(CHAT_SETTINGS_FILE, JSON.stringify(settings, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function getChatModeration(): any {
+  const defaultMod = { mutedUsers: {}, bannedUsers: {} };
+  try {
+    if (!fs.existsSync(CHAT_MODERATION_FILE)) {
+      return defaultMod;
+    }
+    const raw = fs.readFileSync(CHAT_MODERATION_FILE, 'utf-8');
+    return { ...defaultMod, ...JSON.parse(raw) };
+  } catch (e) {
+    return defaultMod;
+  }
+}
+
+function saveChatModeration(mod: any): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(CHAT_MODERATION_FILE, JSON.stringify(mod, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// Real-time Chat SSE Clients
+type ChatSSEClient = { id: number; res: express.Response };
+let chatSSEClients: ChatSSEClient[] = [];
+let chatClientIdCounter = 0;
+
+function broadcastChatEvent(event: { type: string; data?: any; id?: string }) {
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  chatSSEClients.forEach((client) => {
+    try {
+      client.res.write(payload);
+    } catch (e) {}
+  });
+}
+
+// Real-time WebRTC Room State & Signaling
+interface RoomPeer {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  isMuted: boolean;
+  isCameraOn: boolean;
+  isScreenSharing: boolean;
+  isSpeaking: boolean;
+  joinedAt: number;
+}
+
+// Map: roomId -> Map<peerId, RoomPeer>
+const roomsMap = new Map<string, Map<string, RoomPeer>>();
+// Map: roomId -> Map<peerId, express.Response>
+const roomSSEClients = new Map<string, Map<string, express.Response>>();
+
+function broadcastToRoom(roomId: string, event: any, excludePeerId?: string) {
+  const roomClients = roomSSEClients.get(roomId);
+  if (!roomClients) return;
+  const payload = `data: ${JSON.stringify(event)}\n\n`;
+  roomClients.forEach((res, peerId) => {
+    if (excludePeerId && peerId === excludePeerId) return;
+    try {
+      res.write(payload);
+    } catch (e) {}
+  });
+}
+
+function sendSignalToPeer(roomId: string, toPeerId: string, event: any) {
+  const roomClients = roomSSEClients.get(roomId);
+  if (!roomClients) return;
+  const targetRes = roomClients.get(toPeerId);
+  if (targetRes) {
+    try {
+      targetRes.write(`data: ${JSON.stringify(event)}\n\n`);
+    } catch (e) {}
+  }
+}
 
 const DEFAULT_PROFILE = {
   avatarUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80",
@@ -389,7 +559,249 @@ app.get('/api/security/status', (req, res) => {
     xssSanitization: 'STRICT_SCRUBBING_ACTIVE',
     antiReplayGuard: 'TIMESTAMP_NONCE_VERIFIED',
     adminAccountProtected: true,
-    activeConnections: sseClients.length
+    activeConnections: sseClients.length,
+    activeChatClients: chatSSEClients.length
+  });
+});
+
+// ==========================================
+// 7. REAL-TIME CHAT API & SSE ENDPOINTS
+// ==========================================
+
+// Get all chat messages
+app.get('/api/chat/messages', (req, res) => {
+  const messages = getChatMessages();
+  res.json({ success: true, messages });
+});
+
+// Send new chat message (Sanitized & Broadcast)
+app.post('/api/chat/messages', (req, res) => {
+  const msg = req.body;
+  if (!msg || !msg.senderEmail) {
+    return res.status(400).json({ success: false, error: 'Некоректне повідомлення' });
+  }
+
+  const email = String(msg.senderEmail).trim().toLowerCase();
+  const isAdmin = email === ADMIN_EMAIL.toLowerCase();
+
+  // Check Moderation (Mute / Ban)
+  const moderation = getChatModeration();
+  const emailKey = email.replace(/[^a-zA-Z0-9]/g, '_');
+  if (!isAdmin) {
+    if (moderation.bannedUsers && moderation.bannedUsers[emailKey]) {
+      return res.status(403).json({ success: false, error: 'Доступ заблоковано адміністратором.' });
+    }
+    if (moderation.mutedUsers && moderation.mutedUsers[emailKey]) {
+      const muteInfo = moderation.mutedUsers[emailKey];
+      if (muteInfo.mutedUntil > Date.now()) {
+        const remainingMin = Math.ceil((muteInfo.mutedUntil - Date.now()) / 60000);
+        return res.status(403).json({ success: false, error: `Ви у муті ще ${remainingMin} хв.` });
+      }
+    }
+  }
+
+  const cleanMessage = {
+    id: sanitizeText(msg.id || `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`, 50),
+    senderId: sanitizeText(msg.senderId || 'user_' + Date.now(), 50),
+    senderName: sanitizeText(msg.senderName || 'Користувач', 50),
+    senderEmail: sanitizeText(msg.senderEmail, 80),
+    senderAvatar: sanitizeUrlProtocol(msg.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'),
+    isAdmin,
+    text: sanitizeText(msg.text || '', 1000),
+    timestamp: typeof msg.timestamp === 'number' ? msg.timestamp : Date.now(),
+    mentionsAdmin: Boolean(msg.mentionsAdmin || (msg.text && (msg.text.toLowerCase().includes('@nexus') || msg.text.toLowerCase().includes('@chak.tt')))),
+    replyTo: msg.replyTo ? {
+      id: sanitizeText(msg.replyTo.id, 50),
+      senderName: sanitizeText(msg.replyTo.senderName, 50),
+      text: sanitizeText(msg.replyTo.text, 200)
+    } : null,
+    type: msg.type === 'web_room_invite' ? 'web_room_invite' : 'text',
+    roomData: msg.roomData ? {
+      roomId: sanitizeText(msg.roomData.roomId, 50),
+      roomName: sanitizeText(msg.roomData.roomName, 60),
+      isPrivate: Boolean(msg.roomData.isPrivate),
+      creatorEmail: sanitizeText(msg.roomData.creatorEmail, 80),
+      targetEmail: msg.roomData.targetEmail ? sanitizeText(msg.roomData.targetEmail, 80) : undefined,
+      active: Boolean(msg.roomData.active)
+    } : undefined
+  };
+
+  const messages = getChatMessages();
+  // Keep up to 500 messages in history
+  const updated = [...messages, cleanMessage].slice(-500);
+  saveChatMessages(updated);
+
+  // Broadcast to all active chat SSE clients immediately!
+  broadcastChatEvent({ type: 'message', data: cleanMessage });
+
+  res.json({ success: true, message: cleanMessage });
+});
+
+// Delete chat message
+app.delete('/api/chat/messages/:id', (req, res) => {
+  const { id } = req.params;
+  const messages = getChatMessages();
+  const updated = messages.filter(m => m.id !== id);
+  saveChatMessages(updated);
+  broadcastChatEvent({ type: 'delete', id });
+  res.json({ success: true });
+});
+
+// Clear all chat messages (Reset to welcome)
+app.delete('/api/chat/messages', (req, res) => {
+  saveChatMessages(INITIAL_CHAT_MESSAGES);
+  broadcastChatEvent({ type: 'clear', data: INITIAL_CHAT_MESSAGES });
+  res.json({ success: true });
+});
+
+// Live Chat SSE Event Stream (All users see messages in real time)
+app.get('/api/chat/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const id = ++chatClientIdCounter;
+  chatSSEClients.push({ id, res });
+
+  // Send current full chat history immediately upon connection
+  const initialMessages = getChatMessages();
+  res.write(`data: ${JSON.stringify({ type: 'init', data: initialMessages })}\n\n`);
+
+  req.on('close', () => {
+    chatSSEClients = chatSSEClients.filter((c) => c.id !== id);
+  });
+});
+
+// Chat Settings
+app.get('/api/chat/settings', (req, res) => {
+  res.json({ success: true, settings: getChatSettings() });
+});
+
+app.post('/api/chat/settings', (req, res) => {
+  saveChatSettings(req.body);
+  res.json({ success: true, settings: req.body });
+});
+
+// Chat Moderation
+app.get('/api/chat/moderation', (req, res) => {
+  res.json({ success: true, moderation: getChatModeration() });
+});
+
+app.post('/api/chat/moderation', (req, res) => {
+  saveChatModeration(req.body);
+  res.json({ success: true, moderation: req.body });
+});
+
+// ==========================================
+// 8. REAL-TIME WEBRTC SIGNALING & ROOM API
+// ==========================================
+
+// Get room participants
+app.get('/api/room/:roomId/peers', (req, res) => {
+  const { roomId } = req.params;
+  const roomPeersMap = roomsMap.get(roomId);
+  const peers = roomPeersMap ? Array.from(roomPeersMap.values()) : [];
+  res.json({ success: true, peers });
+});
+
+// Join Room
+app.post('/api/room/:roomId/join', (req, res) => {
+  const { roomId } = req.params;
+  const { peer } = req.body;
+  if (!peer || !peer.id) {
+    return res.status(400).json({ success: false, error: 'Missing peer data' });
+  }
+
+  if (!roomsMap.has(roomId)) {
+    roomsMap.set(roomId, new Map());
+  }
+  const roomPeers = roomsMap.get(roomId)!;
+  roomPeers.set(peer.id, peer);
+
+  // Broadcast to other peers in room
+  broadcastToRoom(roomId, { type: 'peer_joined', peer }, peer.id);
+
+  // Return existing peers
+  const existingPeers = Array.from(roomPeers.values()).filter(p => p.id !== peer.id);
+  res.json({ success: true, existingPeers });
+});
+
+// Leave Room
+app.post('/api/room/:roomId/leave', (req, res) => {
+  const { roomId } = req.params;
+  const { peerId } = req.body;
+  if (peerId && roomsMap.has(roomId)) {
+    const roomPeers = roomsMap.get(roomId)!;
+    roomPeers.delete(peerId);
+    broadcastToRoom(roomId, { type: 'peer_left', peerId });
+  }
+  res.json({ success: true });
+});
+
+// Update Peer State (Mic, Cam, Screen, Speaking)
+app.post('/api/room/:roomId/update', (req, res) => {
+  const { roomId } = req.params;
+  const { peerId, state } = req.body;
+  if (peerId && roomsMap.has(roomId)) {
+    const roomPeers = roomsMap.get(roomId)!;
+    const existing = roomPeers.get(peerId);
+    if (existing) {
+      const updated = { ...existing, ...state };
+      roomPeers.set(peerId, updated);
+      broadcastToRoom(roomId, { type: 'peer_updated', peer: updated }, peerId);
+    }
+  }
+  res.json({ success: true });
+});
+
+// WebRTC Signaling (Offer, Answer, ICE Candidates routed directly between peers)
+app.post('/api/room/:roomId/signal', (req, res) => {
+  const { roomId } = req.params;
+  const { fromPeerId, toPeerId, signal } = req.body;
+  if (!fromPeerId || !toPeerId || !signal) {
+    return res.status(400).json({ success: false, error: 'Invalid signal payload' });
+  }
+
+  sendSignalToPeer(roomId, toPeerId, {
+    type: 'signal',
+    fromPeerId,
+    signal
+  });
+
+  res.json({ success: true });
+});
+
+// WebRTC Room SSE Connection
+app.get('/api/room/:roomId/events', (req, res) => {
+  const { roomId } = req.params;
+  const peerId = String(req.query.peerId || '');
+
+  if (!peerId) {
+    return res.status(400).send('peerId required');
+  }
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  if (!roomSSEClients.has(roomId)) {
+    roomSSEClients.set(roomId, new Map());
+  }
+  const roomClients = roomSSEClients.get(roomId)!;
+  roomClients.set(peerId, res);
+
+  // Send connected confirmation
+  res.write(`data: ${JSON.stringify({ type: 'connected', peerId })}\n\n`);
+
+  req.on('close', () => {
+    roomClients.delete(peerId);
+    if (roomsMap.has(roomId)) {
+      const roomPeers = roomsMap.get(roomId)!;
+      roomPeers.delete(peerId);
+      broadcastToRoom(roomId, { type: 'peer_left', peerId });
+    }
   });
 });
 

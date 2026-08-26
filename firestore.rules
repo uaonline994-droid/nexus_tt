@@ -33,6 +33,28 @@ service cloud.firestore {
       allow write: if isMasterAdmin();
     }
 
+    // Real-Time Chat Messages: Anyone can read & create, only Master Admin can update/delete
+    match /nexus_chat_messages/{messageId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if isMasterAdmin();
+    }
+
+    // Chat Settings & Web Room Settings: Anyone can read, only Master Admin can update
+    match /nexus_chat_settings/{docId} {
+      allow read: if true;
+      allow write: if isMasterAdmin();
+    }
+
+    // Web Rooms & Peer Signaling
+    match /nexus_rooms/{roomId}/peers/{peerId} {
+      allow read, write: if true;
+    }
+
+    match /nexus_rooms/{roomId}/signals/{toPeerId}/{fromPeerId} {
+      allow read, write: if true;
+    }
+
     // Fallback: Default safe read for all, write for Master Admin
     match /{document=**} {
       allow read: if true;

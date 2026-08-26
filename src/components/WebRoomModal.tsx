@@ -660,20 +660,26 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
     if (stream) {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(() => {});
       }
       if (audioRef.current) {
         audioRef.current.srcObject = stream;
+        audioRef.current.play().catch(() => {});
       }
     }
   }, [stream]);
 
-  const hasVideo = Boolean(stream && stream.getVideoTracks().some(t => t.enabled));
+  const hasVideo = Boolean(
+    stream && 
+    stream.getVideoTracks().length > 0 && 
+    (peer.isCameraOn || peer.isScreenSharing)
+  );
 
   return (
     <div className={`relative aspect-video rounded-3xl bg-slate-900 border overflow-hidden flex items-center justify-center shadow-xl transition-all ${
       peer.isSpeaking ? 'border-emerald-500 ring-2 ring-emerald-500/50' : 'border-white/10'
     }`}>
-      {/* Remote Audio Track (Plays sound directly from remote peer!) */}
+      {/* Remote Audio Track (Plays voice sound directly from remote peer!) */}
       <audio ref={audioRef} autoPlay playsInline />
 
       {hasVideo ? (

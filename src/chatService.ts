@@ -183,6 +183,20 @@ export function subscribeToChatSettings(onUpdate: (settings: ChatSettings) => vo
     onUpdate(DEFAULT_CHAT_SETTINGS);
   }
 
+  // Fetch from server API
+  fetch('/api/chat/settings')
+    .then(r => r.json())
+    .then(data => {
+      if (isSubscribed && data.success && data.settings) {
+        cachedChatSettings = { ...DEFAULT_CHAT_SETTINGS, ...data.settings };
+        try {
+          localStorage.setItem('nexus_chat_settings_v1', JSON.stringify(cachedChatSettings));
+        } catch (e) {}
+        onUpdate(cachedChatSettings);
+      }
+    })
+    .catch(() => {});
+
   let unsubscribeRtdb: (() => void) | null = null;
   try {
     const dbRef = ref(rtdb, CHAT_SETTINGS_RTDB_PATH);
@@ -223,6 +237,15 @@ export async function saveChatSettings(settings: ChatSettings): Promise<boolean>
     localStorage.setItem('nexus_chat_settings_v1', JSON.stringify(settings));
   } catch (e) {}
 
+  // Server API save
+  try {
+    await fetch('/api/chat/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings)
+    });
+  } catch (e) {}
+
   try {
     const dbRef = ref(rtdb, CHAT_SETTINGS_RTDB_PATH);
     await rtdbSet(dbRef, settings);
@@ -253,6 +276,20 @@ export function subscribeToModerationState(onUpdate: (state: ChatModerationState
   } catch (e) {
     onUpdate({ mutedUsers: {}, bannedUsers: {} });
   }
+
+  // Server API fetch
+  fetch('/api/chat/moderation')
+    .then(r => r.json())
+    .then(data => {
+      if (isSubscribed && data.success && data.moderation) {
+        cachedModerationState = data.moderation;
+        try {
+          localStorage.setItem('nexus_chat_moderation_v1', JSON.stringify(data.moderation));
+        } catch (e) {}
+        onUpdate(data.moderation);
+      }
+    })
+    .catch(() => {});
 
   let unsubscribeRtdb: (() => void) | null = null;
   try {
@@ -285,16 +322,66 @@ export function subscribeToModerationState(onUpdate: (state: ChatModerationState
 }
 
 /**
- * Subscribe to live chat messages
+ * Subscribe to live chat messages (Server SSE + Firestore + RTDB)
  */
 export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => void): () => void {
   let isSubscribed = true;
+  let currentList: ChatMessage[] = getLocalChatMessages();
+
+  const updateStateAndCache = (newMessages: ChatMessage[]) => {
+    currentList = newMessages;
+    try {
+      localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(newMessages));
+    } catch (e) {}
+    onUpdate(newMessages);
+  };
 
   // Local load first
-  const initial = getLocalChatMessages();
-  onUpdate(initial);
+  onUpdate(currentList);
 
-  // RTDB listener
+  // 1. Fetch current full chat history from server
+  fetch('/api/chat/messages')
+    .then(res => res.json())
+    .then(data => {
+      if (isSubscribed && data.success && Array.isArray(data.messages)) {
+        updateStateAndCache(data.messages);
+      }
+    })
+    .catch(() => {});
+
+  // 2. Server-Sent Events (SSE) for instant cross-device live sync
+  let eventSource: EventSource | null = null;
+  try {
+    eventSource = new EventSource('/api/chat/events');
+    eventSource.onmessage = (e) => {
+      if (!isSubscribed) return;
+      try {
+        const event = JSON.parse(e.data);
+        if (event.type === 'init' && Array.isArray(event.data)) {
+          updateStateAndCache(event.data);
+        } else if (event.type === 'message' && event.data) {
+          // Avoid duplicates
+          const msg = event.data as ChatMessage;
+          const exists = currentList.some(m => m.id === msg.id);
+          if (!exists) {
+            const updated = [...currentList, msg];
+            updateStateAndCache(updated);
+          }
+        } else if (event.type === 'delete' && event.id) {
+          const updated = currentList.filter(m => m.id !== event.id);
+          updateStateAndCache(updated);
+        } else if (event.type === 'clear' && Array.isArray(event.data)) {
+          updateStateAndCache(event.data);
+        }
+      } catch (err) {
+        console.warn('Error parsing chat SSE:', err);
+      }
+    };
+  } catch (e) {
+    console.warn('Chat SSE init warning:', e);
+  }
+
+  // 3. RTDB listener fallback
   let unsubscribeRtdb: (() => void) | null = null;
   try {
     const dbRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
@@ -311,24 +398,19 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
           }
           list.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
           if (list.length > 0) {
-            try {
-              localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(list));
-            } catch (e) {}
-            onUpdate(list);
+            updateStateAndCache(list);
           }
         }
       }
     });
-  } catch (e) {
-    console.warn('Chat RTDB setup warning:', e);
-  }
+  } catch (e) {}
 
-  // Cross-tab local events
+  // 4. Cross-tab local events
   const handleLocalEvent = (e: Event) => {
     if (!isSubscribed) return;
     const customEvent = e as CustomEvent<ChatMessage[]>;
     if (customEvent.detail) {
-      onUpdate(customEvent.detail);
+      updateStateAndCache(customEvent.detail);
     }
   };
 
@@ -338,6 +420,9 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
 
   return () => {
     isSubscribed = false;
+    if (eventSource) {
+      eventSource.close();
+    }
     if (unsubscribeRtdb) unsubscribeRtdb();
     if (typeof window !== 'undefined') {
       window.removeEventListener('nexus_chat_local_update', handleLocalEvent);
@@ -399,7 +484,7 @@ export async function sendChatMessage(
     roomData
   };
 
-  // 1. Update local cache
+  // 1. Optimistic Local Update
   const currentMessages = getLocalChatMessages();
   const updatedMessages = [...currentMessages, newMsg];
   try {
@@ -411,7 +496,22 @@ export async function sendChatMessage(
     recordUserMessageSent(sender.email);
   }
 
-  // 2. Save to Firebase Realtime Database
+  // 2. Send via Server REST API (Instant broadcast to all users via SSE)
+  try {
+    const res = await fetch('/api/chat/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newMsg)
+    });
+    const result = await res.json();
+    if (!result.success && result.error) {
+      return { success: false, error: result.error };
+    }
+  } catch (err: any) {
+    console.warn('Server chat post error, relying on RTDB fallback:', err);
+  }
+
+  // 3. Save to Firebase Realtime Database
   try {
     const messageRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${newMsg.id}`);
     await rtdbSet(messageRef, newMsg);
@@ -419,7 +519,7 @@ export async function sendChatMessage(
     console.warn('Realtime database chat send notice:', err);
   }
 
-  // 3. Save to Firestore
+  // 4. Save to Firestore
   try {
     const docRef = doc(db, 'nexus_chat_messages', newMsg.id);
     await setDoc(docRef, newMsg);
@@ -439,6 +539,11 @@ export async function deleteChatMessage(messageId: string): Promise<boolean> {
   try {
     localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(filtered));
     window.dispatchEvent(new CustomEvent('nexus_chat_local_update', { detail: filtered }));
+  } catch (e) {}
+
+  // Server API delete
+  try {
+    await fetch(`/api/chat/messages/${messageId}`, { method: 'DELETE' });
   } catch (e) {}
 
   try {
@@ -461,6 +566,11 @@ export async function clearAllChatMessages(): Promise<boolean> {
   try {
     localStorage.setItem(LOCAL_CHAT_KEY, JSON.stringify(INITIAL_MESSAGES));
     window.dispatchEvent(new CustomEvent('nexus_chat_local_update', { detail: INITIAL_MESSAGES }));
+  } catch (e) {}
+
+  // Server API clear
+  try {
+    await fetch('/api/chat/messages', { method: 'DELETE' });
   } catch (e) {}
 
   try {
@@ -563,11 +673,32 @@ export async function setModerationStatus(
   const cleanEmail = userEmail.trim();
   const emailKey = cleanEmail.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
 
+  // Optimistic local state update
+  const currentMod = { ...cachedModerationState };
+  currentMod.mutedUsers = { ...(currentMod.mutedUsers || {}) };
+  currentMod.bannedUsers = { ...(currentMod.bannedUsers || {}) };
+
+  if (action === 'mute') {
+    const calculatedMuteUntil = durationMinutes === -1 ? 9999999999999 : Date.now() + (durationMinutes * 60 * 1000);
+    currentMod.mutedUsers[emailKey] = { mutedUntil: calculatedMuteUntil, reason, email: cleanEmail };
+  } else if (action === 'ban') {
+    currentMod.bannedUsers[emailKey] = { bannedAt: Date.now(), reason, email: cleanEmail };
+  } else if (action === 'unmute') {
+    delete currentMod.mutedUsers[emailKey];
+  } else if (action === 'unban') {
+    delete currentMod.bannedUsers[emailKey];
+  }
+
+  cachedModerationState = currentMod;
+  try {
+    localStorage.setItem('nexus_chat_moderation_v1', JSON.stringify(currentMod));
+  } catch (e) {}
+
   try {
     if (action === 'mute') {
-      const muteUntil = durationMinutes === -1 ? 9999999999999 : Date.now() + (durationMinutes * 60 * 1000);
+      const calculatedMuteUntil = durationMinutes === -1 ? 9999999999999 : Date.now() + (durationMinutes * 60 * 1000);
       const muteRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/muted/${emailKey}`);
-      await rtdbSet(muteRef, { mutedUntil: muteUntil, reason, email: cleanEmail });
+      await rtdbSet(muteRef, { mutedUntil: calculatedMuteUntil, reason, email: cleanEmail });
     } else if (action === 'ban') {
       const banRef = ref(rtdb, `${CHAT_MODERATION_RTDB_PATH}/banned/${emailKey}`);
       await rtdbSet(banRef, { bannedAt: Date.now(), reason, email: cleanEmail });
