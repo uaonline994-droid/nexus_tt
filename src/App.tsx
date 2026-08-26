@@ -27,7 +27,7 @@ import {
   signOut, 
   onAuthStateChanged 
 } from './firebase';
-import { BioProfile, ToastMessage, ChatMessage, WebRoomSettings, BioLink, NewsPost } from './types';
+import { BioProfile, ToastMessage, ChatMessage, WebRoomSettings, BioLink, NewsPost, BioUser } from './types';
 import { 
   getInitialProfile, 
   saveProfileToDatabase, 
@@ -51,6 +51,7 @@ import { LinksList } from './components/LinksList';
 import { AdminModal } from './components/AdminModal';
 import { GeneralChat } from './components/GeneralChat';
 import { WebRoomModal } from './components/WebRoomModal';
+import { GoogleAuthModal } from './components/GoogleAuthModal';
 import { QuickStatModal } from './components/QuickStatModal';
 import { QuickAddNewsModal } from './components/QuickAddNewsModal';
 import { QuickAddLinkModal } from './components/QuickAddLinkModal';
@@ -98,6 +99,7 @@ export default function App() {
   const [isCopiedShare, setIsCopiedShare] = useState<boolean>(false);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(false);
 
   // Quick Edit Modals State
   const [quickStatKey, setQuickStatKey] = useState<'followers' | 'likes' | 'views' | null>(null);
@@ -174,12 +176,11 @@ export default function App() {
     return () => unsubscribeSettings();
   }, []);
 
-  // Google Sign In (Standard account picker with prompt: 'select_account')
+  // Google Sign In
   const handleGoogleSignInClick = async () => {
     setIsAuthLoading(true);
     soundService.playClickSound();
     try {
-      googleProvider.setCustomParameters({ prompt: 'select_account' });
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
       
@@ -200,16 +201,24 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      console.error('Firebase Auth error:', err);
+      console.warn('Firebase Auth popup info:', err);
       if (err.code === 'auth/popup-closed-by-user') {
-        showToast('Вікно вибору акаунта Google було закрите', 'info');
-      } else if (err.code === 'auth/popup-blocked') {
-        showToast('Браузер заблокував спливаюче вікно Google. Будь ласка, дозвольте pop-up.', 'error');
+        showToast('Вікно вибору акаунта було закрите', 'info');
       } else {
-        showToast('Помилка авторизації Google: ' + (err?.message || 'Спробуйте ще раз'), 'error');
+        // Fallback to Google Auth Modal selector for preview / iframe environments
+        setIsAuthModalOpen(true);
       }
     } finally {
       setIsAuthLoading(false);
+    }
+  };
+
+  const handleSelectAccount = (user: BioUser) => {
+    setCurrentUser(user);
+    if (user.isAdmin) {
+      showToast('👑 Ласкаво просимо, Головний Адміністратор (NEXUS)!', 'success');
+    } else {
+      showToast(`Ви увійшли як ${user.name} (${user.email}). Доступ надано.`, 'success');
     }
   };
 
@@ -726,6 +735,13 @@ export default function App() {
           adminEmail={ADMIN_EMAIL}
         />
       )}
+
+      {/* GOOGLE AUTH MODAL (ACCOUNT SELECTOR & FALLBACK) */}
+      <GoogleAuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onSelectAccount={handleSelectAccount}
+      />
     </div>
   );
 }

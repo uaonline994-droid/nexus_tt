@@ -99,3 +99,11 @@ export interface WebRoomParticipant {
   isScreenSharing: boolean;
   isSpeaking: boolean;
 }
+
+export interface BioUser {
+  id: string;
+  name: string;
+  email: string;
+  avatar: string;
+  isAdmin: boolean;
+}
