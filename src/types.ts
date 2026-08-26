@@ -41,3 +41,61 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
   text: string;
 }
+
+// CHAT & MODERATION TYPES
+export interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderEmail: string;
+  senderAvatar: string;
+  isAdmin: boolean;
+  text: string;
+  timestamp: number;
+  mentionsAdmin?: boolean; // contains @nexus
+  replyTo?: {
+    id: string;
+    senderName: string;
+    text: string;
+  } | null;
+  type?: 'text' | 'web_room_invite';
+  roomData?: {
+    roomId: string;
+    roomName?: string;
+    creatorEmail: string;
+    creatorName: string;
+    targetEmail?: string;
+    targetName?: string;
+    active: boolean;
+    isPrivate?: boolean;
+  };
+}
+
+export interface ChatModerationState {
+  mutedUsers: Record<string, { mutedUntil: number; reason?: string; email?: string }>;
+  bannedUsers: Record<string, { bannedAt: number; reason?: string; email?: string }>;
+}
+
+export interface ChatSettings {
+  isChatOpenForAll: boolean; // true = anyone can chat
+  isReadOnly: boolean; // true = chat closed / read-only for all non-admins
+  whitelistOnly: boolean; // true = only allowedChatEmails can chat
+  allowedChatEmails: string[]; // whitelist of users who can write
+  slowmodeSeconds: number; // e.g. 300, 60, 30, 0
+}
+
+export interface WebRoomSettings {
+  betaTestForAll: boolean;
+  allowedEmails: string[];
+}
+
+export interface WebRoomParticipant {
+  id: string;
+  email: string;
+  name: string;
+  avatar: string;
+  isMuted: boolean;
+  isCameraOn: boolean;
+  isScreenSharing: boolean;
+  isSpeaking: boolean;
+}

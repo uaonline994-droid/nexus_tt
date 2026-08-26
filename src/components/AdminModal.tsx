@@ -24,10 +24,32 @@ import {
   CheckCircle2, 
   Download, 
   RefreshCw, 
-  AlertCircle 
+  AlertCircle,
+  Users,
+  Video,
+  MessageSquare,
+  VolumeX,
+  Volume2,
+  Ban,
+  Unlock,
+  Clock,
+  Radio,
+  UserPlus,
+  ShieldAlert
 } from 'lucide-react';
-import { BioProfile, BioLink, TikTokStats, NewsPost } from '../types';
+import { BioProfile, BioLink, TikTokStats, NewsPost, WebRoomSettings, ChatSettings, ChatModerationState } from '../types';
 import { checkFirestoreConnection } from '../databaseService';
+import { 
+  subscribeToWebRoomSettings, 
+  saveWebRoomSettings, 
+  subscribeToChatSettings, 
+  saveChatSettings, 
+  subscribeToModerationState, 
+  setModerationStatus, 
+  clearAllChatMessages,
+  DEFAULT_CHAT_SETTINGS,
+  DEFAULT_WEB_ROOM_SETTINGS
+} from '../chatService';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -46,7 +68,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onLogout,
   adminEmail
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'links' | 'stats' | 'database' | 'security'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'links' | 'stats' | 'access' | 'database' | 'security'>('profile');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{ loading: boolean; connected: boolean | null; message: string }>({
@@ -54,6 +76,172 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     connected: null,
     message: ''
   });
+
+  // Access & Moderation State
+  const [webRoomSettings, setWebRoomSettings] = useState<WebRoomSettings>(DEFAULT_WEB_ROOM_SETTINGS);
+  const [newWebRoomEmail, setNewWebRoomEmail] = useState('');
+  
+  const [chatSettings, setChatSettings] = useState<ChatSettings>(DEFAULT_CHAT_SETTINGS);
+  const [newChatEmail, setNewChatEmail] = useState('');
+
+  const [moderationState, setModerationState] = useState<ChatModerationState>({ mutedUsers: {}, bannedUsers: {} });
+  const [modTargetEmail, setModTargetEmail] = useState('');
+  const [modActionType, setModActionType] = useState<'mute_15' | 'mute_60' | 'mute_1440' | 'ban'>('mute_60');
+  const [modReason, setModReason] = useState('');
+  const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+
+  // Subscribe to real-time settings when opened
+  useEffect(() => {
+    if (!isOpen) return;
+    const unsubWeb = subscribeToWebRoomSettings((ws) => setWebRoomSettings(ws));
+    const unsubChat = subscribeToChatSettings((cs) => setChatSettings(cs));
+    const unsubMod = subscribeToModerationState((ms) => setModerationState(ms));
+    return () => {
+      unsubWeb();
+      unsubChat();
+      unsubMod();
+    };
+  }, [isOpen]);
+
+  const flashFeedback = (msg: string) => {
+    setActionFeedback(msg);
+    setTimeout(() => setActionFeedback(null), 3500);
+  };
+
+  // Web Room handlers
+  const handleToggleBetaTest = async (enabled: boolean) => {
+    const updated = { ...webRoomSettings, betaTestForAll: enabled };
+    setWebRoomSettings(updated);
+    await saveWebRoomSettings(updated);
+    flashFeedback(enabled ? '🌐 Веб-кімнату відкрито для ВСІХ користувачів!' : '🔒 Веб-кімнату закрито (доступ лише за білим списком)');
+  };
+
+  const handleAddWebRoomEmail = async () => {
+    if (!newWebRoomEmail.trim()) return;
+    const email = newWebRoomEmail.trim().toLowerCase();
+    const current = webRoomSettings.allowedEmails || [];
+    if (current.map(e => e.toLowerCase()).includes(email)) {
+      flashFeedback(`Email ${email} вже є в списку доступу`);
+      return;
+    }
+    const updated = {
+      ...webRoomSettings,
+      allowedEmails: [...current, email]
+    };
+    setWebRoomSettings(updated);
+    setNewWebRoomEmail('');
+    await saveWebRoomSettings(updated);
+    flashFeedback(`✅ Доступ до веб-кімнати надано для ${email}`);
+  };
+
+  const handleRemoveWebRoomEmail = async (emailToRemove: string) => {
+    if (emailToRemove.toLowerCase() === adminEmail.toLowerCase()) {
+      flashFeedback('Неможливо видалити головного адміністратора');
+      return;
+    }
+    const updated = {
+      ...webRoomSettings,
+      allowedEmails: (webRoomSettings.allowedEmails || []).filter(e => e.toLowerCase() !== emailToRemove.toLowerCase())
+    };
+    setWebRoomSettings(updated);
+    await saveWebRoomSettings(updated);
+    flashFeedback(`🗑️ Доступ до веб-кімнати відкликано для ${emailToRemove}`);
+  };
+
+  // Chat Access handlers
+  const handleSetChatMode = async (mode: 'open' | 'whitelist' | 'readonly') => {
+    const updated: ChatSettings = {
+      ...chatSettings,
+      isChatOpenForAll: mode === 'open',
+      whitelistOnly: mode === 'whitelist',
+      isReadOnly: mode === 'readonly'
+    };
+    setChatSettings(updated);
+    await saveChatSettings(updated);
+    if (mode === 'open') flashFeedback('🟢 Чат відкрито для ВСІХ глядачів!');
+    else if (mode === 'whitelist') flashFeedback('🟡 Чат доступний ТІЛЬКИ для користувачів із білого списку!');
+    else flashFeedback('🔴 Чат закрито (Режим "Тільки читання")!');
+  };
+
+  const handleAddChatEmail = async () => {
+    if (!newChatEmail.trim()) return;
+    const email = newChatEmail.trim().toLowerCase();
+    const current = chatSettings.allowedChatEmails || [];
+    if (current.map(e => e.toLowerCase()).includes(email)) {
+      flashFeedback(`Email ${email} вже є в білому списку чату`);
+      return;
+    }
+    const updated: ChatSettings = {
+      ...chatSettings,
+      allowedChatEmails: [...current, email]
+    };
+    setChatSettings(updated);
+    setNewChatEmail('');
+    await saveChatSettings(updated);
+    flashFeedback(`✅ Доступ до чату надано для ${email}`);
+  };
+
+  const handleRemoveChatEmail = async (emailToRemove: string) => {
+    if (emailToRemove.toLowerCase() === adminEmail.toLowerCase()) {
+      flashFeedback('Неможливо видалити головного адміністратора');
+      return;
+    }
+    const updated: ChatSettings = {
+      ...chatSettings,
+      allowedChatEmails: (chatSettings.allowedChatEmails || []).filter(e => e.toLowerCase() !== emailToRemove.toLowerCase())
+    };
+    setChatSettings(updated);
+    await saveChatSettings(updated);
+    flashFeedback(`🗑️ Доступ до чату відкликано для ${emailToRemove}`);
+  };
+
+  const handleSetSlowmode = async (seconds: number) => {
+    const updated: ChatSettings = {
+      ...chatSettings,
+      slowmodeSeconds: seconds
+    };
+    setChatSettings(updated);
+    await saveChatSettings(updated);
+    flashFeedback(seconds === 0 ? '⚡ Антиспам вимкнено (0s)' : `⏱️ Антиспам таймер: ${seconds} сек`);
+  };
+
+  // Moderation handlers
+  const handleApplyModeration = async () => {
+    if (!modTargetEmail.trim()) return;
+    const target = modTargetEmail.trim().toLowerCase();
+    if (target === adminEmail.toLowerCase()) {
+      flashFeedback('Неможливо накласти обмеження на адміністратора');
+      return;
+    }
+
+    if (modActionType === 'ban') {
+      await setModerationStatus(target, 'ban', 0, modReason.trim() || 'Порушення правил чату');
+      flashFeedback(`⛔ Користувача ${target} повністю заблоковано в чаті.`);
+    } else {
+      const minutes = modActionType === 'mute_15' ? 15 : modActionType === 'mute_60' ? 60 : 1440;
+      await setModerationStatus(target, 'mute', minutes, modReason.trim() || 'Тимчасовий мут');
+      flashFeedback(`🔇 Користувачу ${target} видано мут на ${minutes} хв.`);
+    }
+    setModTargetEmail('');
+    setModReason('');
+  };
+
+  const handleUnbanUser = async (email: string) => {
+    await setModerationStatus(email, 'unban');
+    flashFeedback(`🔓 Користувача ${email} розблоковано.`);
+  };
+
+  const handleUnmuteUser = async (email: string) => {
+    await setModerationStatus(email, 'unmute');
+    flashFeedback(`🔊 З користувача ${email} знято мут.`);
+  };
+
+  const handleClearAllChat = async () => {
+    if (window.confirm('Ви впевнені, що хочете видалити всі повідомлення в чаті для всіх?')) {
+      await clearAllChatMessages();
+      flashFeedback('🧹 Всі повідомлення чату успішно видалено.');
+    }
+  };
 
   // Profile fields
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl || '');
@@ -341,6 +529,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             <BarChart3 className="w-3.5 h-3.5" />
             TikTok Статистика
+          </button>
+          <button
+            onClick={() => setActiveTab('access')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'access' 
+                ? 'bg-indigo-600 text-white shadow-sm' 
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            Доступ & Чат
           </button>
           <button
             onClick={() => setActiveTab('database')}
@@ -790,6 +989,465 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     />
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB: ACCESS & MODERATION (WEB ROOM & CHAT) */}
+          {activeTab === 'access' && (
+            <div className="space-y-6">
+              {/* Feedback toast banner */}
+              {actionFeedback && (
+                <div className="p-3.5 rounded-2xl bg-indigo-50 border border-indigo-200 text-xs font-bold text-indigo-900 flex items-center gap-2 animate-in fade-in">
+                  <Check className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>{actionFeedback}</span>
+                </div>
+              )}
+
+              {/* 1. WEB ROOM ACCESS CARD */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
+                      <Video className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                        1. Доступ до Веб-кімнати (Голос / Відео)
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Виберіть: відкрити веб-кімнату для всіх або надавати доступ окремим людям
+                      </p>
+                    </div>
+                  </div>
+                  <span className={`text-[10px] font-bold uppercase px-2.5 py-1 rounded-full ${
+                    webRoomSettings.betaTestForAll 
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' 
+                      : 'bg-amber-50 text-amber-700 border border-amber-200'
+                  }`}>
+                    {webRoomSettings.betaTestForAll ? '🌐 Для Всіх' : '🔒 За Списком'}
+                  </span>
+                </div>
+
+                {/* Mode switch */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => handleToggleBetaTest(true)}
+                    className={`p-3 rounded-xl border flex items-center gap-3 text-left transition-all cursor-pointer ${
+                      webRoomSettings.betaTestForAll
+                        ? 'bg-emerald-50/70 border-emerald-300 ring-2 ring-emerald-500/20'
+                        : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      webRoomSettings.betaTestForAll ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      <Radio className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">🌐 Відкрити для всіх</div>
+                      <div className="text-[10px] text-slate-500">Будь-який глядач може заходити в кімнату</div>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleBetaTest(false)}
+                    className={`p-3 rounded-xl border flex items-center gap-3 text-left transition-all cursor-pointer ${
+                      !webRoomSettings.betaTestForAll
+                        ? 'bg-amber-50/70 border-amber-300 ring-2 ring-amber-500/20'
+                        : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${
+                      !webRoomSettings.betaTestForAll ? 'bg-amber-600 text-white' : 'bg-slate-200 text-slate-500'
+                    }`}>
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <div className="text-xs font-bold text-slate-800">🔒 Тільки за білим списком</div>
+                      <div className="text-[10px] text-slate-500">Доступ лише для обраних Email-адрес</div>
+                    </div>
+                  </button>
+                </div>
+
+                {/* Add single user to Web Room whitelist */}
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <label className="text-[10.5px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Надати персональний доступ користувачу (по Email):
+                  </label>
+                  <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <div className="relative flex-1 w-full">
+                      <input
+                        type="email"
+                        value={newWebRoomEmail}
+                        onChange={(e) => setNewWebRoomEmail(e.target.value)}
+                        placeholder="наприклад: user@gmail.com"
+                        className="w-full h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 outline-none focus:bg-white focus:border-indigo-500 font-medium"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleAddWebRoomEmail}
+                      disabled={!newWebRoomEmail.trim()}
+                      className="w-full sm:w-auto h-10 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      + Надати доступ до кімнати
+                    </button>
+                  </div>
+
+                  {/* List of Allowed Web Room Users */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase">
+                      Список дозволених адрес ({(webRoomSettings.allowedEmails || []).length}):
+                    </div>
+                    <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                      {(webRoomSettings.allowedEmails || []).map((email) => {
+                        const isMainAdmin = email.toLowerCase() === adminEmail.toLowerCase();
+                        return (
+                          <div
+                            key={email}
+                            className="p-2 px-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs"
+                          >
+                            <span className="font-mono text-slate-800 truncate">{email}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isMainAdmin ? (
+                                <span className="text-[9.5px] font-bold uppercase tracking-wider bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-md">
+                                  👑 Головний Адмін
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveWebRoomEmail(email)}
+                                  className="text-rose-500 hover:text-rose-700 p-1 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Відкликати доступ"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. CHAT ACCESS & PERMISSIONS CARD */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
+                      <MessageSquare className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                        2. Доступ до Загального Чату
+                      </h3>
+                      <p className="text-[11px] text-slate-500">
+                        Керуйте режимами чату (відкрито для всіх, білий список або тільки читання)
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3 Chat Modes */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSetChatMode('open')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      chatSettings.isChatOpenForAll && !chatSettings.isReadOnly && !chatSettings.whitelistOnly
+                        ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-500/20'
+                        : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      Для всіх
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Всі авторизовані можуть писати</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSetChatMode('whitelist')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      chatSettings.whitelistOnly
+                        ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-500/20'
+                        : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-amber-500"></span>
+                      Білий список
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Лише обрані користувачі</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleSetChatMode('readonly')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      chatSettings.isReadOnly
+                        ? 'bg-rose-50 border-rose-300 ring-2 ring-rose-500/20'
+                        : 'bg-slate-50/60 border-slate-200 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                      Тільки читання
+                    </div>
+                    <div className="text-[10px] text-slate-500 mt-0.5">Чат закрито для відправки</div>
+                  </button>
+                </div>
+
+                {/* Add to Chat Whitelist */}
+                <div className="pt-2 border-t border-slate-100 space-y-2.5">
+                  <label className="text-[10.5px] font-bold text-slate-700 uppercase tracking-wider block">
+                    Додати користувача в білий список чату:
+                  </label>
+                  <div className="flex flex-col sm:flex-row items-center gap-2">
+                    <input
+                      type="email"
+                      value={newChatEmail}
+                      onChange={(e) => setNewChatEmail(e.target.value)}
+                      placeholder="наприклад: user@gmail.com"
+                      className="w-full h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 outline-none focus:bg-white focus:border-indigo-500 font-medium"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddChatEmail}
+                      disabled={!newChatEmail.trim()}
+                      className="w-full sm:w-auto h-10 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+                    >
+                      <UserPlus className="w-3.5 h-3.5" />
+                      + Додати в білий список
+                    </button>
+                  </div>
+
+                  {/* Whitelist items */}
+                  <div className="space-y-1.5 pt-1">
+                    <div className="text-[10px] font-bold text-slate-500 uppercase">
+                      Користувачі з дозволом на чат ({(chatSettings.allowedChatEmails || []).length}):
+                    </div>
+                    <div className="max-h-28 overflow-y-auto space-y-1.5 pr-1">
+                      {(chatSettings.allowedChatEmails || []).map((email) => {
+                        const isMainAdmin = email.toLowerCase() === adminEmail.toLowerCase();
+                        return (
+                          <div
+                            key={email}
+                            className="p-2 px-3 rounded-xl bg-slate-50 border border-slate-200/80 flex items-center justify-between text-xs"
+                          >
+                            <span className="font-mono text-slate-800 truncate">{email}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isMainAdmin ? (
+                                <span className="text-[9.5px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 px-2 py-0.5 rounded-md">
+                                  👑 Адмін
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveChatEmail(email)}
+                                  className="text-rose-500 hover:text-rose-700 p-1 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                                  title="Видалити з білого списку"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Slowmode cooldown selection */}
+                <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-3.5 h-3.5 text-slate-500" />
+                    <span className="text-[11px] font-bold uppercase text-slate-700">Антиспам кулдаун (Slowmode):</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {[
+                      { sec: 0, label: 'Вимкнено' },
+                      { sec: 30, label: '30 сек' },
+                      { sec: 60, label: '1 хв' },
+                      { sec: 300, label: '5 хв' }
+                    ].map((item) => (
+                      <button
+                        key={item.sec}
+                        type="button"
+                        onClick={() => handleSetSlowmode(item.sec)}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          chatSettings.slowmodeSeconds === item.sec
+                            ? 'bg-indigo-600 text-white shadow-2xs'
+                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. INDIVIDUAL BAN / MUTE MODERATION CARD */}
+              <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-rose-50 border border-rose-100 flex items-center justify-center text-rose-600">
+                    <ShieldAlert className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                      3. Персональний Бан або Мут (Закрити доступ 1 користувачу)
+                    </h3>
+                    <p className="text-[11px] text-slate-500">
+                      Введіть Email користувача, щоб заборонити йому писати в чат тимчасово або назавжди
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1 ml-1">Email порушника</label>
+                    <input
+                      type="email"
+                      value={modTargetEmail}
+                      onChange={(e) => setModTargetEmail(e.target.value)}
+                      placeholder="user@example.com"
+                      className="w-full h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-medium text-slate-800 outline-none focus:bg-white focus:border-rose-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[10px] uppercase font-bold text-slate-600 mb-1 ml-1">Дія / Покарання</label>
+                    <select
+                      value={modActionType}
+                      onChange={(e) => setModActionType(e.target.value as any)}
+                      className="w-full h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs font-bold text-slate-800 outline-none cursor-pointer"
+                    >
+                      <option value="mute_15">🔇 Мут на 15 хв</option>
+                      <option value="mute_60">🔇 Мут на 1 год</option>
+                      <option value="mute_1440">🔇 Мут на 24 год</option>
+                      <option value="ban">⛔ Повний Бан</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-2.5">
+                  <input
+                    type="text"
+                    value={modReason}
+                    onChange={(e) => setModReason(e.target.value)}
+                    placeholder="Причина покарання (наприклад: Спам / Неповага)..."
+                    className="w-full h-10 px-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 outline-none focus:bg-white focus:border-rose-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleApplyModeration}
+                    disabled={!modTargetEmail.trim()}
+                    className="w-full sm:w-auto h-10 px-4 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold whitespace-nowrap flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer shadow-xs"
+                  >
+                    <Ban className="w-3.5 h-3.5" />
+                    Застосувати санкцію
+                  </button>
+                </div>
+
+                {/* Lists of currently banned and muted users */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100">
+                  {/* Banned Users */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10.5px] font-bold text-rose-700 uppercase flex items-center gap-1">
+                      <Ban className="w-3 h-3" /> Заблоковані (Бан):
+                    </span>
+                    {Object.entries(moderationState.bannedUsers || {}).length === 0 ? (
+                      <div className="p-2.5 rounded-xl bg-slate-50 text-[11px] text-slate-400 italic text-center">
+                        Немає заблокованих
+                      </div>
+                    ) : (
+                      <div className="space-y-1 max-h-24 overflow-y-auto">
+                        {Object.entries(moderationState.bannedUsers || {}).map(([key, rawData]) => {
+                          const data = rawData as { email?: string; reason?: string; bannedAt?: number };
+                          const email = data.email || key.replace(/_/g, '.');
+                          return (
+                            <div key={key} className="p-2 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-between text-xs">
+                              <div className="truncate">
+                                <div className="font-mono font-bold text-rose-900 truncate">{email}</div>
+                                {data.reason && <div className="text-[10px] text-rose-600">{data.reason}</div>}
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleUnbanUser(email)}
+                                className="px-2 py-1 bg-white border border-rose-300 rounded text-[10px] font-bold text-rose-700 hover:bg-rose-100 cursor-pointer shrink-0 ml-1"
+                              >
+                                🔓 Розблокувати
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Muted Users */}
+                  <div className="space-y-1.5">
+                    <span className="text-[10.5px] font-bold text-amber-700 uppercase flex items-center gap-1">
+                      <VolumeX className="w-3 h-3" /> У муті:
+                    </span>
+                    {Object.entries(moderationState.mutedUsers || {}).length === 0 ? (
+                      <div className="p-2.5 rounded-xl bg-slate-50 text-[11px] text-slate-400 italic text-center">
+                        Немає користувачів у муті
+                      </div>
+                    ) : (
+                      <div className="space-y-1 max-h-24 overflow-y-auto">
+                        {Object.entries(moderationState.mutedUsers || {}).map(([key, rawData]) => {
+                          const data = rawData as { email?: string; mutedUntil: number; reason?: string };
+                          const email = data.email || key.replace(/_/g, '.');
+                          const remainingMin = Math.max(0, Math.ceil((data.mutedUntil - Date.now()) / 60000));
+                          return (
+                            <div key={key} className="p-2 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-between text-xs">
+                              <div className="truncate">
+                                <div className="font-mono font-bold text-amber-900 truncate">{email}</div>
+                                <div className="text-[10px] text-amber-700">Залишилось: {remainingMin} хв</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleUnmuteUser(email)}
+                                className="px-2 py-1 bg-white border border-amber-300 rounded text-[10px] font-bold text-amber-700 hover:bg-amber-100 cursor-pointer shrink-0 ml-1"
+                              >
+                                🔊 Зняти мут
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. CLEAR CHAT HISTORY CARD */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    🧹 Очистити історію чату
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Видалити всі повідомлення з чату для всіх глядачів
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleClearAllChat}
+                  className="w-full sm:w-auto h-9 px-4 rounded-xl bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 text-xs font-bold uppercase tracking-wider transition-all cursor-pointer"
+                >
+                  Очистити всі повідомлення
+                </button>
               </div>
             </div>
           )}
