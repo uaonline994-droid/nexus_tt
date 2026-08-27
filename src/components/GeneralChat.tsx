@@ -7,7 +7,8 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   ArrowLeft, Send, Sparkles, Shield, Radio, AtSign, Clock, 
   Trash2, VolumeX, Ban, User, MoreVertical, Check, MessageSquare, 
-  Video, CornerDownRight, Volume2, ChevronDown, PhoneCall, PhoneOff, Lock
+  Video, CornerDownRight, Volume2, ChevronDown, PhoneCall, PhoneOff, Lock,
+  Bell, BellOff
 } from 'lucide-react';
 import { ChatMessage, WebRoomSettings, ChatSettings, ChatModerationState } from '../types';
 import { 
@@ -16,7 +17,6 @@ import {
   clearAllChatMessages, 
   setModerationStatus,
   getUserCooldownRemaining,
-  CHAT_COOLDOWN_SECONDS,
   subscribeToChatSettings,
   subscribeToModerationState,
   checkUserChatAccess,
@@ -24,6 +24,7 @@ import {
 } from '../chatService';
 import { isMasterAdmin, MASTER_ADMIN_EMAIL } from '../securityService';
 import { soundService } from '../soundService';
+import { webNotificationService } from '../notificationService';
 
 interface GeneralChatProps {
   onBack: () => void;
@@ -61,9 +62,33 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isSoundMuted, setIsSoundMuted] = useState(soundService.isMuted);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
-  const [visitedMentionIds, setVisitedMentionIds] = useState<Set<string>>(new Set());
   const [chatSettings, setChatSettings] = useState<ChatSettings>(DEFAULT_CHAT_SETTINGS);
   const [moderationState, setModerationState] = useState<ChatModerationState>({ mutedUsers: {}, bannedUsers: {} });
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(webNotificationService.permission);
+
+  const userEmailLower = currentUser?.email?.toLowerCase().trim() || '';
+  const isAdmin = Boolean(currentUser && isMasterAdmin(currentUser.email));
+
+  // Persist visited mentions in localStorage so [@ X] doesn't reset when leaving and returning
+  const [visitedMentionIds, setVisitedMentionIds] = useState<Set<string>>(() => {
+    if (!userEmailLower) return new Set();
+    try {
+      const raw = localStorage.getItem(`nexus_visited_mentions_${userEmailLower}`);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  });
+
+  // Persist dismissed private room calls
+  const [dismissedCallIds, setDismissedCallIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('nexus_dismissed_calls');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (e) {
+      return new Set();
+    }
+  });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
@@ -80,15 +105,23 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     };
   }, []);
 
-  const userEmailLower = currentUser?.email?.toLowerCase().trim() || '';
-  const isAdmin = Boolean(currentUser && isMasterAdmin(currentUser.email));
+  // Update visited mentions cache when currentUser changes
+  useEffect(() => {
+    if (!userEmailLower) return;
+    try {
+      const raw = localStorage.getItem(`nexus_visited_mentions_${userEmailLower}`);
+      if (raw) {
+        setVisitedMentionIds(new Set(JSON.parse(raw)));
+      }
+    } catch (e) {}
+  }, [userEmailLower]);
 
   // Check real-time access
   const accessCheck = useMemo(() => {
     return checkUserChatAccess(currentUser?.email, isAdmin, chatSettings, moderationState);
   }, [currentUser?.email, isAdmin, chatSettings, moderationState]);
 
-  // Filter messages: Private room invites are ONLY visible to creator, target, and admin!
+  // Filter messages: Private room invites are ONLY visible to creator, target, and admin
   const visibleMessages = useMemo(() => {
     return messages.filter((msg) => {
       if (msg.type === 'web_room_invite' && msg.roomData?.isPrivate) {
@@ -133,8 +166,9 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   // Find active incoming private room call for current user
   const activeIncomingCall = useMemo(() => {
     if (!currentUser) return null;
-    return visibleMessages.slice(-5).reverse().find((msg) => {
+    return visibleMessages.slice(-10).reverse().find((msg) => {
       if (msg.type === 'web_room_invite' && msg.roomData?.isPrivate && msg.roomData.active) {
+        if (dismissedCallIds.has(msg.id)) return false;
         const target = msg.roomData.targetEmail?.toLowerCase().trim();
         const creator = msg.roomData.creatorEmail?.toLowerCase().trim();
         if (target === userEmailLower && creator !== userEmailLower) {
@@ -146,9 +180,9 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       }
       return null;
     });
-  }, [visibleMessages, currentUser, userEmailLower]);
+  }, [visibleMessages, currentUser, userEmailLower, dismissedCallIds]);
 
-  // Sound triggers on new messages
+  // Sound & Push Notification triggers on new messages
   useEffect(() => {
     if (messages.length > prevMessagesCountRef.current) {
       const latestMsg = messages[messages.length - 1];
@@ -163,8 +197,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
 
         if (latestMsg.type === 'web_room_invite' && latestMsg.roomData?.targetEmail?.toLowerCase() === userEmailLower) {
           soundService.playInviteSound();
+          webNotificationService.notifyRoomInvite(latestMsg.senderName, latestMsg.roomData.roomName || 'Приватний дзвінок', true);
         } else if (isMentioned) {
           soundService.playMentionSound();
+          webNotificationService.notifyMention(latestMsg.senderName, latestMsg.text);
         } else {
           soundService.playMessageSound();
         }
@@ -186,11 +222,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Scroll directly to Telegram-style @ mention message & decrement unvisited counter
+  // Scroll directly to Telegram-style @ mention message & persist visited state
   const handleScrollToMention = () => {
     if (unvisitedMentions.length === 0) return;
     soundService.playClickSound();
-    // Jump to the oldest unvisited mention
     const targetMsg = unvisitedMentions[0];
     if (targetMsg) {
       const el = document.getElementById(`chat-msg-${targetMsg.id}`);
@@ -199,16 +234,33 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         setHighlightedMsgId(targetMsg.id);
         setTimeout(() => setHighlightedMsgId(null), 3000);
       }
-      // Decrement counter by marking this mention as visited
       setVisitedMentionIds((prev) => {
         const next = new Set(prev);
         next.add(targetMsg.id);
+        try {
+          if (userEmailLower) {
+            localStorage.setItem(`nexus_visited_mentions_${userEmailLower}`, JSON.stringify(Array.from(next)));
+          }
+        } catch (e) {}
         return next;
       });
     }
   };
 
-  // Track cooldown timer every second
+  // Decline incoming call
+  const handleDeclineIncomingCall = (callMsgId: string) => {
+    soundService.playClickSound();
+    setDismissedCallIds((prev) => {
+      const next = new Set(prev);
+      next.add(callMsgId);
+      try {
+        localStorage.setItem('nexus_dismissed_calls', JSON.stringify(Array.from(next)));
+      } catch (e) {}
+      return next;
+    });
+  };
+
+  // Track cooldown timer every second with automatic live decrement
   useEffect(() => {
     if (!currentUser || isAdmin) {
       setCooldownSeconds(0);
@@ -216,20 +268,36 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     }
 
     const checkCooldown = () => {
-      const remaining = getUserCooldownRemaining(currentUser.email);
+      const remaining = getUserCooldownRemaining(currentUser.email, chatSettings.slowmodeSeconds);
       setCooldownSeconds(remaining);
+      if (remaining <= 0) {
+        setErrorMessage((prev) => (prev && prev.includes('Зачекайте ще') ? null : prev));
+      }
     };
 
     checkCooldown();
     const interval = setInterval(checkCooldown, 1000);
     return () => clearInterval(interval);
-  }, [currentUser, isAdmin]);
+  }, [currentUser?.email, isAdmin, chatSettings.slowmodeSeconds]);
 
   // Toggle audio sound effects
   const handleToggleSound = () => {
     const muted = soundService.toggleMute();
     setIsSoundMuted(muted);
     if (!muted) soundService.playClickSound();
+  };
+
+  // Request Web Push Notification Permission
+  const handleRequestPushNotification = async () => {
+    soundService.playClickSound();
+    const granted = await webNotificationService.requestPermission();
+    setNotifPermission(webNotificationService.permission);
+    if (granted) {
+      webNotificationService.sendNotification({
+        title: '🔔 Сповіщення NEXUS активовано',
+        body: 'Ви будете миттєво отримувати сповіщення про згадки в чаті та дзвінки у кімнату!'
+      });
+    }
   };
 
   // Insert @nexus tag
@@ -239,31 +307,31 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       onLoginGoogle();
       return;
     }
+    const mention = '@nexus ';
     setInputText((prev) => {
-      if (prev.includes('@nexus')) return prev;
-      return `@nexus ${prev}`.trimStart();
+      if (!prev.includes('@nexus')) {
+        return prev ? `${prev} ${mention}` : mention;
+      }
+      return prev;
     });
     inputRef.current?.focus();
   };
 
-  // Mention a specific user
-  const handleMentionUser = (userName: string) => {
+  // Click on username or tag in message
+  const handleMentionUser = (name: string) => {
     soundService.playClickSound();
-    setInputText((prev) => `${prev} @${userName} `.trimStart());
+    const clean = name.replace(/\s+/g, '_');
+    const tag = `@${clean} `;
+    setInputText((prev) => (prev.includes(tag) ? prev : `${prev} ${tag}`));
     setActiveMenuMsgId(null);
     inputRef.current?.focus();
   };
 
-  // Send standard text message
-  const handleSendMessage = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  // Submit chat message
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
     if (!currentUser) {
       onLoginGoogle();
-      return;
-    }
-
-    if (!currentUser.profileId && onRequireRegistration) {
-      onRequireRegistration();
       return;
     }
 
@@ -299,7 +367,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       setInputText('');
       setReplyingTo(null);
       if (!isAdmin) {
-        setCooldownSeconds(CHAT_COOLDOWN_SECONDS);
+        setCooldownSeconds(chatSettings.slowmodeSeconds || 0);
       }
       setTimeout(scrollToBottom, 100);
     } else if (result.error) {
@@ -308,7 +376,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     setIsSending(false);
   };
 
-  // Suggest PRIVATE Web Room invite (Only sender and target see this!)
+  // Suggest PRIVATE Web Room invite
   const handleSuggestPrivateWebRoom = async (targetMsg: ChatMessage) => {
     if (!currentUser) {
       onLoginGoogle();
@@ -351,11 +419,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     onOpenWebRoom('room_main', '🌐 Загальна Веб-кімната NEXUS', false);
   };
 
-  // Admin: Delete Message
+  // Delete Message (Sender or Admin)
   const handleDeleteMsg = async (msgId: string) => {
-    if (!isAdmin) return;
     soundService.playClickSound();
-    await deleteChatMessage(msgId);
+    await deleteChatMessage(msgId, currentUser?.email);
     setActiveMenuMsgId(null);
   };
 
@@ -410,6 +477,20 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
 
         {/* Right Header Controls */}
         <div className="flex items-center gap-1.5 shrink-0">
+          {/* Push Notification Button */}
+          <button
+            onClick={handleRequestPushNotification}
+            className={`w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer ${
+              notifPermission === 'granted'
+                ? 'bg-white/20 text-emerald-300 hover:bg-white/30'
+                : 'bg-white/10 text-white/80 hover:bg-white/20'
+            }`}
+            title={notifPermission === 'granted' ? 'Push-сповіщення увімкнено' : 'Увімкнути браузерні Push-сповіщення'}
+          >
+            {notifPermission === 'granted' ? <Bell className="w-4 h-4 text-emerald-300" /> : <BellOff className="w-4 h-4 opacity-75" />}
+          </button>
+
+          {/* Sound Toggle */}
           <button
             onClick={handleToggleSound}
             className={`w-8 h-8 rounded-full flex items-center justify-center transition-all cursor-pointer ${
@@ -434,158 +515,201 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         </div>
       </div>
 
-      {/* Incoming Call Notification Banner */}
+      {/* Incoming Call Notification Banner with Accept & Decline */}
       {activeIncomingCall && (
-        <div className="bg-emerald-600 text-white px-4 py-2 flex items-center justify-between gap-2 text-xs font-medium shrink-0 z-20 shadow-sm animate-pulse">
+        <div className="bg-emerald-600 text-white px-3.5 py-2 flex items-center justify-between gap-2 text-xs font-medium shrink-0 z-20 shadow-md animate-in fade-in">
           <div className="flex items-center gap-2 min-w-0 truncate">
-            <PhoneCall className="w-4 h-4 shrink-0" />
+            <PhoneCall className="w-4 h-4 shrink-0 animate-bounce text-emerald-200" />
             <span className="truncate">
-              {activeIncomingCall.senderName} викликає вас у приватну кімнату
+              <strong className="font-bold">{activeIncomingCall.senderName}</strong> викликає вас у приватну кімнату
             </span>
           </div>
-          <button
-            onClick={() => onOpenWebRoom(
-              activeIncomingCall.roomData?.roomId || 'room_private', 
-              activeIncomingCall.roomData?.roomName || 'Приватна кімната',
-              true
-            )}
-            className="px-2.5 py-1 rounded-full bg-white text-emerald-700 text-xs font-bold shrink-0 transition-all cursor-pointer shadow-xs"
-          >
-            Прийняти
-          </button>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              onClick={() => {
+                soundService.playClickSound();
+                onOpenWebRoom(
+                  activeIncomingCall.roomData?.roomId || 'room_private', 
+                  activeIncomingCall.roomData?.roomName || 'Приватна кімната',
+                  true
+                );
+              }}
+              className="px-3 py-1 rounded-full bg-white text-emerald-800 text-xs font-bold transition-all cursor-pointer shadow-xs hover:bg-emerald-50 active:scale-95"
+            >
+              Прийняти
+            </button>
+            <button
+              onClick={() => handleDeclineIncomingCall(activeIncomingCall.id)}
+              className="px-2.5 py-1 rounded-full bg-black/25 hover:bg-black/40 text-white text-xs font-medium transition-all cursor-pointer"
+              title="Відхилити дзвінок"
+            >
+              Відхилити
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Telegram Chat Wallpaper Messages Feed */}
+      {/* Telegram Message List */}
       <div 
         ref={chatContainerRef}
         onScroll={handleScroll}
-        className="flex-1 p-3 sm:p-4 overflow-y-auto space-y-2.5 relative bg-[#8fa4b8]/15"
+        className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-2 relative"
         style={{
-          backgroundImage: `radial-gradient(#2481cc12 1px, transparent 1px)`,
+          backgroundImage: `radial-gradient(#c8d6e5 1px, transparent 1px)`,
           backgroundSize: '20px 20px'
         }}
-        onClick={() => setActiveMenuMsgId(null)}
       >
         {visibleMessages.map((msg) => {
-          const isMyMsg = currentUser && (msg.senderEmail.toLowerCase() === userEmailLower);
-          const isNexusAdmin = msg.isAdmin || msg.senderEmail.toLowerCase() === MASTER_ADMIN_EMAIL.toLowerCase();
-          const isRoomInvite = msg.type === 'web_room_invite';
-          const isPrivateRoom = msg.roomData?.isPrivate;
+          const isMyMsg = Boolean(userEmailLower && msg.senderEmail.toLowerCase() === userEmailLower);
           const isHighlighted = highlightedMsgId === msg.id;
+          const isInvite = msg.type === 'web_room_invite';
+          const isTargetOfInvite = isInvite && msg.roomData?.targetEmail?.toLowerCase() === userEmailLower;
+          const isCreatorOfInvite = isInvite && msg.roomData?.creatorEmail?.toLowerCase() === userEmailLower;
+
+          // Parse text for @mentions
+          const renderFormattedText = (text: string) => {
+            const parts = text.split(/(@[\w.-]+)/g);
+            return parts.map((part, i) => {
+              if (part.startsWith('@')) {
+                const tag = part.toLowerCase();
+                const isMyTag = (tag === '@nexus' && isAdmin) || (userEmailLower && tag.includes(userEmailLower.split('@')[0]));
+                return (
+                  <span 
+                    key={i} 
+                    className={`font-semibold cursor-pointer px-0.5 rounded transition-colors ${
+                      isMyTag 
+                        ? 'bg-amber-400/30 text-amber-900 font-bold' 
+                        : 'text-[#2481cc] hover:underline'
+                    }`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleMentionUser(part.substring(1));
+                    }}
+                  >
+                    {part}
+                  </span>
+                );
+              }
+              return part;
+            });
+          };
 
           return (
             <div
-              key={msg.id}
               id={`chat-msg-${msg.id}`}
-              className={`flex flex-col ${isMyMsg ? 'items-end' : 'items-start'} transition-all`}
+              key={msg.id}
+              className={`flex items-end gap-2 group transition-all duration-300 ${
+                isMyMsg ? 'justify-end' : 'justify-start'
+              }`}
             >
-              <div className={`relative group max-w-[85%] sm:max-w-[75%] rounded-2xl px-3 py-2 text-slate-800 transition-all ${
-                isHighlighted 
-                  ? 'ring-2 ring-amber-400 bg-amber-50' 
-                  : isRoomInvite
-                  ? 'bg-white border border-indigo-200 shadow-sm'
-                  : isMyMsg
-                  ? 'bg-[#effdde] border border-[#d2f0b7] rounded-tr-xs shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
-                  : 'bg-white border border-slate-200/70 rounded-tl-xs shadow-[0_1px_2px_rgba(0,0,0,0.06)]'
-              }`}>
+              {/* Avatar on Left for other users */}
+              {!isMyMsg && (
+                <img
+                  src={msg.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+                  alt={msg.senderName}
+                  onClick={() => handleMentionUser(msg.senderName)}
+                  className="w-7 h-7 rounded-full object-cover shrink-0 cursor-pointer hover:opacity-80 transition-opacity mb-0.5 shadow-xs"
+                  title={`Клікніть, щоб тегнути @${msg.senderName}`}
+                />
+              )}
 
-                {/* Reply context if exists (Telegram Style Quote) */}
-                {msg.replyTo && (
-                  <div className="mb-1.5 px-2 py-1 rounded-md bg-black/5 border-l-2 border-[#2481cc] text-[11px] text-slate-700 truncate">
-                    <span className="font-bold text-[#2481cc] block text-[10px]">{msg.replyTo.senderName}</span>
-                    <span className="opacity-80 truncate block">{msg.replyTo.text}</span>
-                  </div>
-                )}
-
-                {/* Sender Header */}
+              {/* Message Bubble */}
+              <div 
+                className={`relative max-w-[82%] sm:max-w-[75%] rounded-2xl p-2.5 px-3 shadow-xs text-[13px] leading-relaxed transition-all ${
+                  isHighlighted 
+                    ? 'ring-2 ring-[#2481cc] scale-[1.02] shadow-md' 
+                    : ''
+                } ${
+                  isInvite 
+                    ? 'bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-300 text-slate-800' 
+                    : isMyMsg
+                    ? 'bg-[#eef7fe] border border-[#d6e9f8] text-slate-800 rounded-br-xs'
+                    : 'bg-white border border-slate-200/80 text-slate-800 rounded-bl-xs'
+                }`}
+              >
+                {/* Sender Name & Role */}
                 {!isMyMsg && (
                   <div className="flex items-center gap-1.5 mb-1">
-                    <img
-                      src={msg.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
-                      alt={msg.senderName}
-                      className="w-3.5 h-3.5 rounded-full object-cover border border-slate-200"
-                    />
-                    <span className={`text-xs font-bold tracking-tight truncate ${
-                      isNexusAdmin ? 'text-[#2481cc]' : 'text-slate-800'
-                    }`}>
+                    <span 
+                      onClick={() => handleMentionUser(msg.senderName)}
+                      className="font-bold text-xs text-[#2481cc] cursor-pointer hover:underline truncate"
+                    >
                       {msg.senderName}
                     </span>
-
-                    {isNexusAdmin && (
-                      <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-700 text-[8.5px] font-bold flex items-center gap-0.5">
-                        <Sparkles className="w-2.5 h-2.5" />
-                        ADMIN
-                      </span>
-                    )}
-
-                    {msg.mentionsAdmin && (
-                      <span className="px-1.5 py-0.2 rounded bg-sky-100 text-[#2481cc] text-[8.5px] font-bold">
-                        @NEXUS
-                      </span>
-                    )}
-
-                    {isPrivateRoom && (
-                      <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-700 text-[8.5px] font-bold flex items-center gap-0.5">
-                        <Lock className="w-2.5 h-2.5" />
-                        Приватно
+                    {msg.isAdmin && (
+                      <span className="px-1.5 py-0.2 rounded bg-amber-500/15 border border-amber-500/30 text-[9px] font-extrabold text-amber-700 uppercase tracking-tight flex items-center gap-0.5 shrink-0">
+                        <Shield className="w-2.5 h-2.5" />
+                        Admin
                       </span>
                     )}
                   </div>
                 )}
 
-                {/* Message Body */}
-                {isRoomInvite ? (
-                  /* Web Room Invitation Card (Telegram Audio/Video Call Style) */
-                  <div className="mt-0.5 space-y-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-slate-900">
-                      <Radio className="w-4 h-4 text-emerald-600 animate-pulse" />
-                      <span>{msg.roomData?.roomName || msg.text}</span>
+                {/* Replying banner */}
+                {msg.replyTo && (
+                  <div className="mb-1.5 pl-2 border-l-2 border-[#2481cc] text-[11px] text-slate-600 bg-slate-50/80 py-0.5 pr-2 rounded-r">
+                    <span className="font-semibold text-[#2481cc] block truncate">
+                      {msg.replyTo.senderName}
+                    </span>
+                    <span className="truncate block opacity-80">
+                      {msg.replyTo.text}
+                    </span>
+                  </div>
+                )}
+
+                {/* Invite Card Content */}
+                {isInvite && msg.roomData ? (
+                  <div className="space-y-2 py-0.5">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-700 flex items-center justify-center shrink-0">
+                        <Video className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-emerald-900 leading-tight">
+                          {msg.roomData.roomName || 'Веб-кімната NEXUS'}
+                        </h4>
+                        <span className="text-[10px] text-emerald-700 font-medium">
+                          {msg.roomData.isPrivate ? '🔒 Приватний голосовий/відео зв\'язок' : '🌐 Загальна кімната'}
+                        </span>
+                      </div>
                     </div>
 
-                    {isPrivateRoom && msg.roomData?.targetName && (
-                      <div className="text-[11px] text-slate-500">
-                        Дзвінок між: <span className="font-semibold text-slate-700">{msg.roomData.creatorName}</span> та <span className="font-semibold text-emerald-700">{msg.roomData.targetName}</span>
-                      </div>
-                    )}
+                    <p className="text-xs text-slate-700">
+                      {msg.text}
+                    </p>
 
                     <button
                       onClick={() => onOpenWebRoom(
-                        msg.roomData?.roomId || 'room_default', 
+                        msg.roomData?.roomId || 'room_main',
                         msg.roomData?.roomName || 'Веб-кімната',
-                        isPrivateRoom
+                        msg.roomData?.isPrivate
                       )}
-                      className={`w-full h-8 rounded-xl text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                        isPrivateRoom 
-                          ? 'bg-emerald-600 hover:bg-emerald-700' 
-                          : 'bg-[#2481cc] hover:bg-[#1f74b8]'
-                      }`}
+                      className="w-full py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition-all cursor-pointer active:scale-95"
                     >
-                      <Video className="w-3.5 h-3.5" />
-                      <span>{isPrivateRoom ? 'Увійти в приватний дзвінок' : 'Приєднатися до дзвінка'}</span>
+                      <Radio className="w-3.5 h-3.5 animate-pulse" />
+                      <span>{isTargetOfInvite ? 'Прийняти та увійти в кімнату' : 'Увійти в кімнату'}</span>
                     </button>
                   </div>
                 ) : (
-                  <p className="text-[13px] text-slate-800 leading-relaxed whitespace-pre-wrap break-words">
-                    {msg.text}
-                  </p>
+                  /* Standard Text Message */
+                  <div className="break-words whitespace-pre-wrap">
+                    {renderFormattedText(msg.text)}
+                  </div>
                 )}
 
-                {/* Message Footer: Telegram Timestamp & Action dots */}
-                <div className="flex items-center justify-end gap-1 mt-0.5 text-[10px] text-slate-400 select-none">
+                {/* Footer Timestamp & 3-dot Menu trigger */}
+                <div className="flex items-center justify-end gap-1 mt-1 text-[10px] text-slate-400 select-none">
                   <span>
                     {new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
-                  
                   {isMyMsg && (
-                    <Check className="w-3 h-3 text-[#4fae4e]" />
+                    <Check className="w-3 h-3 text-[#2481cc]" />
                   )}
-
-                  {/* Action Dropdown Trigger */}
+                  
+                  {/* 3-dots Menu Button */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
-                      soundService.playClickSound();
                       setActiveMenuMsgId(activeMenuMsgId === msg.id ? null : msg.id);
                     }}
                     className="p-0.5 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer ml-0.5"
@@ -595,10 +719,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
                   </button>
                 </div>
 
-                {/* Action Popup Menu (Telegram style popup) */}
+                {/* Action Popup Menu (Positioned safely within chat bounds) */}
                 {activeMenuMsgId === msg.id && (
                   <div 
-                    className="absolute right-0 bottom-full mb-1 z-30 w-52 rounded-xl bg-white border border-slate-200 shadow-xl p-1 space-y-0.5 text-slate-700 text-xs"
+                    className={`absolute ${isMyMsg ? 'right-0' : 'left-0'} bottom-full mb-1 z-40 w-48 max-w-[calc(100vw-3rem)] rounded-xl bg-white border border-slate-200/90 shadow-2xl p-1 space-y-0.5 text-slate-700 text-xs`}
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
@@ -608,7 +732,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
                         setActiveMenuMsgId(null);
                         inputRef.current?.focus();
                       }}
-                      className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-left cursor-pointer"
+                      className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-left cursor-pointer font-medium"
                     >
                       <CornerDownRight className="w-3.5 h-3.5 text-[#2481cc]" />
                       <span>Відповісти</span>
@@ -616,35 +740,44 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
 
                     <button
                       onClick={() => handleMentionUser(msg.senderName)}
-                      className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-left cursor-pointer"
+                      className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 flex items-center gap-2 text-left cursor-pointer font-medium"
                     >
                       <AtSign className="w-3.5 h-3.5 text-[#2481cc]" />
                       <span>Згадати @{msg.senderName}</span>
                     </button>
 
                     {/* Private room invite */}
-                    <button
-                      onClick={() => handleSuggestPrivateWebRoom(msg)}
-                      className="w-full px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-700 flex items-center gap-2 text-left cursor-pointer"
-                    >
-                      <Video className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Приватний дзвінок</span>
-                    </button>
+                    {!isMyMsg && (
+                      <button
+                        onClick={() => handleSuggestPrivateWebRoom(msg)}
+                        className="w-full px-2.5 py-1.5 rounded-lg hover:bg-emerald-50 text-emerald-700 flex items-center gap-2 text-left cursor-pointer font-medium"
+                      >
+                        <Video className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>Приватний дзвінок</span>
+                      </button>
+                    )}
 
-                    {/* Admin Actions */}
-                    {isAdmin && (
+                    {/* Delete Message for Author or Admin */}
+                    {(isMyMsg || isAdmin) && (
                       <>
-                        <div className="h-px bg-slate-100 my-1" />
+                        <div className="h-px bg-slate-100 my-0.5" />
                         <button
                           onClick={() => handleDeleteMsg(msg.id)}
-                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 flex items-center gap-2 text-left cursor-pointer"
+                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-600 flex items-center gap-2 text-left cursor-pointer font-medium"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
-                          <span>Видалити</span>
+                          <span>Видалити {isMyMsg ? 'моє повідомлення' : 'повідомлення'}</span>
                         </button>
+                      </>
+                    )}
+
+                    {/* Admin Moderation */}
+                    {isAdmin && !isMyMsg && (
+                      <>
+                        <div className="h-px bg-slate-100 my-0.5" />
                         <button
                           onClick={() => handleMuteUser(msg.senderEmail, 15)}
-                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-amber-50 text-amber-700 flex items-center gap-2 text-left cursor-pointer"
+                          className="w-full px-2.5 py-1.5 rounded-lg hover:bg-amber-50 text-amber-700 flex items-center gap-2 text-left cursor-pointer font-medium"
                         >
                           <VolumeX className="w-3.5 h-3.5" />
                           <span>Мут на 15 хв</span>
@@ -661,7 +794,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* FLOATING TELEGRAM-STYLE "@" BUTTON WITH BRACKETS [ @ 2 ] */}
+      {/* FLOATING TELEGRAM-STYLE "@" BUTTON WITH PERSISTENT BRACKETS [ @ 2 ] */}
       {unvisitedMentions.length > 0 && (
         <button
           onClick={handleScrollToMention}

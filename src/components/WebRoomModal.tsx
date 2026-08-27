@@ -167,6 +167,21 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
             const existing = next.get(peerId);
             if (existing) {
               next.set(peerId, { ...existing, stream: remoteStream });
+            } else {
+              next.set(peerId, {
+                peer: {
+                  id: peerId,
+                  name: 'Учасник кімнати',
+                  email: '',
+                  avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+                  isMuted: false,
+                  isCameraOn: remoteStream.getVideoTracks().length > 0,
+                  isScreenSharing: false,
+                  isSpeaking: false,
+                  joinedAt: Date.now()
+                },
+                stream: remoteStream
+              });
             }
             return next;
           });

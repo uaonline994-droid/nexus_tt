@@ -108,10 +108,15 @@ export function getLocalChatMessages(): ChatMessage[] {
 /**
  * Check if user is currently under cooldown
  */
-export function getUserCooldownRemaining(userEmail: string, slowmodeSeconds: number = 0): number {
+export function getUserCooldownRemaining(userEmail: string, slowmodeSeconds?: number): number {
   if (!userEmail) return 0;
   if (userEmail.toLowerCase() === ADMIN_EMAIL.toLowerCase()) return 0;
-  if (slowmodeSeconds <= 0) return 0;
+  
+  const effectiveSlowmode = typeof slowmodeSeconds === 'number' 
+    ? slowmodeSeconds 
+    : (cachedChatSettings.slowmodeSeconds || 0);
+
+  if (effectiveSlowmode <= 0) return 0;
 
   try {
     const raw = localStorage.getItem(`${LOCAL_COOLDOWN_KEY}_${userEmail.toLowerCase()}`);
@@ -119,7 +124,7 @@ export function getUserCooldownRemaining(userEmail: string, slowmodeSeconds: num
       const lastTime = parseInt(raw, 10);
       if (!isNaN(lastTime)) {
         const elapsed = Math.floor((Date.now() - lastTime) / 1000);
-        const remaining = slowmodeSeconds - elapsed;
+        const remaining = effectiveSlowmode - elapsed;
         return remaining > 0 ? remaining : 0;
       }
     }
@@ -714,9 +719,9 @@ export async function sendChatMessage(
 }
 
 /**
- * Delete a chat message (Admin Only)
+ * Delete a chat message (Sender or Admin)
  */
-export async function deleteChatMessage(messageId: string): Promise<boolean> {
+export async function deleteChatMessage(messageId: string, requesterEmail?: string): Promise<boolean> {
   const currentMessages = getLocalChatMessages();
   const filtered = currentMessages.filter((m) => m.id !== messageId);
   try {
@@ -726,14 +731,26 @@ export async function deleteChatMessage(messageId: string): Promise<boolean> {
 
   // Server API delete
   try {
-    await fetch(`/api/chat/messages/${messageId}`, { method: 'DELETE' });
+    await fetch(`/api/chat/messages/${messageId}`, { 
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requesterEmail })
+    });
   } catch (e) {}
 
+  // RTDB nested path
   try {
     const messageRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${messageId}`);
     await rtdbSet(messageRef, null);
   } catch (err) {}
 
+  // RTDB top-level path
+  try {
+    const topLevelRef = ref(rtdb, `nexus_chat_messages/${messageId}`);
+    await rtdbSet(topLevelRef, null);
+  } catch (err) {}
+
+  // Firestore delete
   try {
     const docRef = doc(db, 'nexus_chat_messages', messageId);
     await deleteDoc(docRef);
