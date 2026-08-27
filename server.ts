@@ -767,6 +767,40 @@ app.post('/api/users/profile', (req, res) => {
 });
 
 // ==========================================
+// 7.5 DIRECT 1-ON-1 CHAT API
+// ==========================================
+const directChatsMap = new Map<string, any[]>();
+
+app.get('/api/direct_chat/:chatId/messages', (req, res) => {
+  const { chatId } = req.params;
+  const messages = directChatsMap.get(chatId) || [];
+  res.json({ success: true, messages });
+});
+
+app.post('/api/direct_chat/:chatId/messages', (req, res) => {
+  const { chatId } = req.params;
+  const message = req.body;
+  if (!message || !message.id) {
+    return res.status(400).json({ success: false, error: 'Invalid message payload' });
+  }
+  const messages = directChatsMap.get(chatId) || [];
+  const updated = [...messages.filter(m => m.id !== message.id), message];
+  updated.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  // Keep up to 200 messages per direct chat
+  directChatsMap.set(chatId, updated.slice(-200));
+  res.json({ success: true, message });
+});
+
+app.delete('/api/direct_chat/:chatId/messages/:messageId', (req, res) => {
+  const { chatId, messageId } = req.params;
+  const messages = directChatsMap.get(chatId) || [];
+  const updated = messages.filter(m => m.id !== messageId);
+  directChatsMap.set(chatId, updated);
+  res.json({ success: true });
+});
+
+
+// ==========================================
 // 8. REAL-TIME WEBRTC SIGNALING & ROOM API
 // ==========================================
 

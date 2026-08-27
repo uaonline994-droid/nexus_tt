@@ -129,3 +129,18 @@ export interface UserProfile {
   createdAt: number;
   updatedAt?: number;
 }
+
+export interface DirectMessage {
+  id: string;
+  chatId: string; // format: dm_{minId}_{maxId}
+  senderId: string;
+  senderName: string;
+  senderEmail: string;
+  senderAvatar: string;
+  recipientId: string;
+  recipientName: string;
+  recipientEmail: string;
+  text: string;
+  timestamp: number;
+}
+

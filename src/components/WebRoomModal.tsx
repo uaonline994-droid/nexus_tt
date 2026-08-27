@@ -6,8 +6,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   X, Mic, MicOff, Video, VideoOff, Monitor, PhoneOff, 
-  Users, Volume2, ShieldCheck, Sparkles, UserPlus, Settings, 
-  Check, Radio, AlertCircle, RefreshCw, Lock
+  Users, Volume2, VolumeX, ShieldCheck, Sparkles, UserPlus, Settings, 
+  Check, Radio, AlertCircle, RefreshCw, Lock, Sliders, Zap
 } from 'lucide-react';
 import { WebRoomParticipant, WebRoomSettings } from '../types';
 import { ADMIN_EMAIL } from '../firebase';
@@ -44,14 +44,28 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
   hasAccess
 }) => {
   const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOn, setIsCameraOn] = useState(true);
+  // Camera is OFF by default when joining as requested!
+  const [isCameraOn, setIsCameraOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [micLevel, setMicLevel] = useState<number>(0);
+  
+  // Modals & Panels
   const [showAdminSettings, setShowAdminSettings] = useState(false);
+  const [showAudioSettings, setShowAudioSettings] = useState(false);
   const [newAllowedEmail, setNewAllowedEmail] = useState('');
   const [copiedLink, setCopiedLink] = useState(false);
   const [mediaError, setMediaError] = useState<string | null>(null);
+
+  // Audio Processing Modes
+  const [echoCancellation, setEchoCancellation] = useState(true);
+  const [noiseSuppression, setNoiseSuppression] = useState(true);
+  const [autoGainControl, setAutoGainControl] = useState(true);
+  const [micBoost, setMicBoost] = useState<number>(100); // 0 - 200%
+
+  // Local Peer Volume & Mute Controls: peerId -> volume (0 - 100), peerId -> isLocallyMuted
+  const [peerVolumes, setPeerVolumes] = useState<Record<string, number>>({});
+  const [locallyMutedPeers, setLocallyMutedPeers] = useState<Record<string, boolean>>({});
 
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -60,7 +74,7 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
   // Map of remote peers: id -> { peer: PeerInfo, stream?: MediaStream }
   const [remotePeers, setRemotePeers] = useState<Map<string, { peer: PeerInfo; stream?: MediaStream }>>(new Map());
 
-  // Handle Room Lifecycle and Media Initialization
+  // Handle Room Lifecycle and Media Initialization (Audio only by default)
   useEffect(() => {
     if (!isOpen || !hasAccess) return;
 
@@ -70,49 +84,27 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
     async function startRoom() {
       let stream: MediaStream | null = null;
       try {
+        // Start with audio only (Camera off by default)
         stream = await navigator.mediaDevices.getUserMedia({
-          video: { 
-            width: { ideal: 1920, min: 1280 }, 
-            height: { ideal: 1080, min: 720 },
-            frameRate: { ideal: 30, max: 60 }
-          },
+          video: false,
           audio: {
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            echoCancellation,
+            noiseSuppression,
+            autoGainControl,
             channelCount: 2,
             sampleRate: 48000
           }
         });
-        setIsCameraOn(true);
+        setIsCameraOn(false);
       } catch (err: any) {
-        console.warn('Video+Audio getUserMedia failed, attempting audio-only:', err);
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: false,
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-              channelCount: 2,
-              sampleRate: 48000
-            }
-          });
-          setIsCameraOn(false);
-        } catch (audioErr: any) {
-          console.warn('Microphone permission blocked or unavailable:', audioErr);
-          setMediaError('Доступ до камери або мікрофона не надано. Ви можете слухати та бачити інших учасників.');
-          setIsCameraOn(false);
-        }
+        console.warn('Microphone permission warning:', err);
+        setMediaError('Доступ до мікрофона не надано. Ви можете слухати та бачити інших учасників.');
       }
 
       localStreamRef.current = stream;
-      if (stream && localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
 
       // Audio Level Analyzer
-      if (stream) {
+      if (stream && stream.getAudioTracks().length > 0) {
         stopAudioMeter = createAudioLevelMeter(stream, (level, speaking) => {
           setMicLevel(level);
           setIsSpeaking(speaking && !isMuted);
@@ -129,7 +121,7 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
         email: currentUser.email,
         avatar: currentUser.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
         isMuted: false,
-        isCameraOn: Boolean(stream && stream.getVideoTracks().length > 0),
+        isCameraOn: false,
         isScreenSharing: false,
         isSpeaking: false,
         joinedAt: Date.now()
@@ -236,33 +228,53 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
 
   const toggleCamera = async () => {
     soundService.playClickSound();
-    if (localStreamRef.current) {
+    
+    // If we already have a stream and camera is currently on, disable video track
+    if (isCameraOn && localStreamRef.current) {
       const videoTrack = localStreamRef.current.getVideoTracks()[0];
       if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        const nextCam = videoTrack.enabled;
-        setIsCameraOn(nextCam);
-        if (webrtcManagerRef.current) {
-          webrtcManagerRef.current.updateLocalState({ isCameraOn: nextCam });
-        }
-      } else {
-        // Request video track if wasn't started originally
-        try {
-          const videoStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          const newVideoTrack = videoStream.getVideoTracks()[0];
-          localStreamRef.current.addTrack(newVideoTrack);
-          if (localVideoRef.current) {
-            localVideoRef.current.srcObject = localStreamRef.current;
-          }
-          setIsCameraOn(true);
-          if (webrtcManagerRef.current) {
-            webrtcManagerRef.current.replaceVideoTrack(newVideoTrack);
-            webrtcManagerRef.current.updateLocalState({ isCameraOn: true });
-          }
-        } catch (e) {
-          setMediaError('Не вдалося отримати доступ до відеокамери');
-        }
+        videoTrack.enabled = false;
+        videoTrack.stop();
+        localStreamRef.current.removeTrack(videoTrack);
       }
+      setIsCameraOn(false);
+      if (webrtcManagerRef.current) {
+        webrtcManagerRef.current.replaceVideoTrack(null);
+        webrtcManagerRef.current.updateLocalState({ isCameraOn: false });
+      }
+      return;
+    }
+
+    // Turn camera ON
+    try {
+      const videoStream = await navigator.mediaDevices.getUserMedia({
+        video: { 
+          width: { ideal: 1280, min: 640 }, 
+          height: { ideal: 720, min: 480 },
+          frameRate: { ideal: 30, max: 30 }
+        }
+      });
+      const newVideoTrack = videoStream.getVideoTracks()[0];
+
+      if (!localStreamRef.current) {
+        localStreamRef.current = new MediaStream();
+      }
+
+      localStreamRef.current.addTrack(newVideoTrack);
+
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = localStreamRef.current;
+      }
+
+      setIsCameraOn(true);
+
+      if (webrtcManagerRef.current) {
+        webrtcManagerRef.current.replaceVideoTrack(newVideoTrack);
+        webrtcManagerRef.current.updateLocalState({ isCameraOn: true });
+      }
+    } catch (e: any) {
+      console.warn('Camera request error:', e);
+      setMediaError('Не вдалося отримати доступ до відеокамери. Перевірте дозволи у браузері.');
     }
   };
 
@@ -348,6 +360,17 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
     await onUpdateSettings(updated);
   };
 
+  // Local Peer Volume Change handler
+  const handleSetPeerVolume = (peerId: string, volume: number) => {
+    setPeerVolumes(prev => ({ ...prev, [peerId]: volume }));
+  };
+
+  // Local Peer Mute Toggle handler
+  const handleToggleLocalMutePeer = (peerId: string) => {
+    soundService.playClickSound();
+    setLocallyMutedPeers(prev => ({ ...prev, [peerId]: !prev[peerId] }));
+  };
+
   if (!isOpen) return null;
 
   // Access Denied Screen
@@ -380,8 +403,8 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
   const remotePeersList = Array.from(remotePeers.values());
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/95 backdrop-blur-2xl animate-in fade-in">
-      <div className="w-full max-w-5xl h-[92vh] sm:h-[88vh] rounded-[32px] bg-slate-950 border border-white/10 shadow-2xl flex flex-col overflow-hidden text-white">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-slate-950/95 backdrop-blur-2xl animate-in fade-in select-none">
+      <div className="w-full max-w-5xl h-[92vh] sm:h-[88vh] rounded-[32px] bg-slate-950 border border-white/10 shadow-2xl flex flex-col overflow-hidden text-white relative">
         
         {/* Top Header */}
         <div className="h-16 px-4 sm:px-6 bg-slate-900/90 border-b border-white/10 flex items-center justify-between shrink-0">
@@ -414,6 +437,24 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            
+            {/* Audio Settings Modal Toggle */}
+            <button
+              onClick={() => {
+                soundService.playClickSound();
+                setShowAudioSettings(prev => !prev);
+              }}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors flex items-center gap-1.5 cursor-pointer ${
+                showAudioSettings 
+                  ? 'bg-sky-500/20 border-sky-500 text-sky-300' 
+                  : 'bg-slate-850 hover:bg-slate-800 text-slate-300 border-white/10'
+              }`}
+              title="Налаштування звуку та кімнати"
+            >
+              <Sliders className="w-3.5 h-3.5 text-sky-400" />
+              <span className="hidden sm:inline">Звук</span>
+            </button>
+
             {currentUser.isAdmin && (
               <button
                 onClick={() => {
@@ -451,14 +492,14 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
 
         {/* Media Warning Notice */}
         {mediaError && (
-          <div className="bg-amber-950/60 border-b border-amber-800/80 px-4 py-2 flex items-center justify-between text-amber-300 text-xs">
+          <div className="bg-amber-950/60 border-b border-amber-800/80 px-4 py-2 flex items-center justify-between text-amber-300 text-xs shrink-0">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
               <span>{mediaError}</span>
             </div>
             <button
               onClick={() => setMediaError(null)}
-              className="text-amber-400 font-bold ml-2"
+              className="text-amber-400 font-bold ml-2 cursor-pointer"
             >
               ✕
             </button>
@@ -477,7 +518,7 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
                 </h4>
                 <button
                   onClick={() => setShowAdminSettings(false)}
-                  className="text-slate-400 hover:text-white"
+                  className="text-slate-400 hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -597,7 +638,15 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
 
               {/* Remote Peers Tiles */}
               {remotePeersList.map(({ peer, stream }) => (
-                <RemotePeerTile key={peer.id} peer={peer} stream={stream} />
+                <RemotePeerTile 
+                  key={peer.id} 
+                  peer={peer} 
+                  stream={stream}
+                  volume={peerVolumes[peer.id] ?? 100}
+                  isLocallyMuted={locallyMutedPeers[peer.id] ?? false}
+                  onVolumeChange={(vol) => handleSetPeerVolume(peer.id, vol)}
+                  onToggleMute={() => handleToggleLocalMutePeer(peer.id)}
+                />
               ))}
 
               {/* Waiting for partner if room is empty */}
@@ -605,13 +654,125 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
                 <div className="text-center py-3 text-xs text-slate-400 flex flex-col items-center gap-1">
                   <div className="w-2 h-2 rounded-full bg-amber-400 animate-ping mb-1" />
                   <span>Очікування підключення інших учасників у кімнату...</span>
-                  <span className="text-[10px] text-slate-500">Коли хтось приєднається, відео та звук увімкнуться автоматично.</span>
+                  <span className="text-[10px] text-slate-500">Коли хтось приєднається, голос та відео увімкнуться автоматично.</span>
                 </div>
               )}
 
             </div>
           )}
         </div>
+
+        {/* Audio & Room Settings Modal Overlay */}
+        {showAudioSettings && (
+          <div className="absolute inset-0 z-40 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-slate-900 border border-white/10 rounded-3xl p-5 shadow-2xl space-y-4">
+              
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <div className="flex items-center gap-2">
+                  <Sliders className="w-5 h-5 text-sky-400" />
+                  <h4 className="text-sm font-bold text-white">Налаштування аудіо та кімнати</h4>
+                </div>
+                <button
+                  onClick={() => setShowAudioSettings(false)}
+                  className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Room Audio Processing Modes */}
+              <div className="space-y-2.5">
+                <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider block">
+                  Фільтри голосу та обробка:
+                </span>
+
+                {/* Echo Cancellation */}
+                <div className="p-3 rounded-2xl bg-slate-950 border border-white/5 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">⚡ Поглинання відлуння (Echo)</span>
+                    <span className="text-[10px] text-slate-400">Усуває луну та зворотний зв'язок динаміків</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setEchoCancellation(prev => !prev)}
+                    className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                      echoCancellation ? 'bg-sky-500' : 'bg-slate-800'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      echoCancellation ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Noise Suppression */}
+                <div className="p-3 rounded-2xl bg-slate-950 border border-white/5 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">🔇 Шумозаглушення</span>
+                    <span className="text-[10px] text-slate-400">Фільтрує фоновий шум, клацання та дихання</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNoiseSuppression(prev => !prev)}
+                    className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                      noiseSuppression ? 'bg-sky-500' : 'bg-slate-800'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      noiseSuppression ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
+
+                {/* Auto Gain Control */}
+                <div className="p-3 rounded-2xl bg-slate-950 border border-white/5 flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-200 block">🎚️ Автоматичне підсилення (AGC)</span>
+                    <span className="text-[10px] text-slate-400">Автоматично вирівнює гучність голосу</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setAutoGainControl(prev => !prev)}
+                    className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
+                      autoGainControl ? 'bg-sky-500' : 'bg-slate-800'
+                    }`}
+                  >
+                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${
+                      autoGainControl ? 'translate-x-6' : 'translate-x-1'
+                    }`} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Mic Boost Slider */}
+              <div className="p-3 rounded-2xl bg-slate-950 border border-white/5 space-y-1.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-slate-300">Підсилення мікрофона (Boost)</span>
+                  <span className="font-mono text-sky-400 font-bold">{micBoost}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="200"
+                  value={micBoost}
+                  onChange={(e) => setMicBoost(parseInt(e.target.value, 10))}
+                  className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                />
+              </div>
+
+              <button
+                onClick={() => {
+                  soundService.playClickSound();
+                  setShowAudioSettings(false);
+                }}
+                className="w-full py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs transition-colors cursor-pointer"
+              >
+                Зберегти налаштування
+              </button>
+
+            </div>
+          </div>
+        )}
 
         {/* Live Mic Decibel Bar */}
         <div className="h-1.5 bg-slate-900 w-full overflow-hidden shrink-0">
@@ -637,13 +798,13 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
             {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
-          {/* Camera Button */}
+          {/* Camera Button (Starts off by default) */}
           <button
             onClick={toggleCamera}
             className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all cursor-pointer ${
               !isCameraOn 
-                ? 'bg-rose-500/20 text-rose-400 border border-rose-500/40 hover:bg-rose-500/30' 
-                : 'bg-slate-800 text-slate-200 border border-white/10 hover:bg-slate-700'
+                ? 'bg-slate-800 text-slate-400 border border-white/10 hover:bg-slate-700 hover:text-white' 
+                : 'bg-indigo-600 text-white border border-indigo-500 shadow-lg shadow-indigo-600/30'
             }`}
             title={isCameraOn ? 'Вимкнути камеру' : 'Увімкнути камеру'}
           >
@@ -682,12 +843,20 @@ export const WebRoomModal: React.FC<WebRoomModalProps> = ({
 };
 
 /**
- * Subcomponent for Rendering a Remote WebRTC Peer with Audio & Video
+ * Subcomponent for Rendering a Remote WebRTC Peer with Audio & Video + Volume & Local Mute
  */
-const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ peer, stream }) => {
+const RemotePeerTile: React.FC<{ 
+  peer: PeerInfo; 
+  stream?: MediaStream;
+  volume: number;
+  isLocallyMuted: boolean;
+  onVolumeChange: (volume: number) => void;
+  onToggleMute: () => void;
+}> = ({ peer, stream, volume, isLocallyMuted, onVolumeChange, onToggleMute }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [audioBlocked, setAudioBlocked] = useState(false);
+  const [showVolumeSlider, setShowVolumeSlider] = useState(false);
 
   useEffect(() => {
     if (stream) {
@@ -703,6 +872,18 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
       }
     }
   }, [stream]);
+
+  // Apply volume & local mute to audio element
+  useEffect(() => {
+    if (audioRef.current) {
+      if (isLocallyMuted) {
+        audioRef.current.muted = true;
+      } else {
+        audioRef.current.muted = false;
+        audioRef.current.volume = Math.max(0, Math.min(1, volume / 100));
+      }
+    }
+  }, [volume, isLocallyMuted]);
 
   const handleUnblockAudio = () => {
     if (audioRef.current) {
@@ -722,7 +903,7 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
     <div className={`relative aspect-video rounded-3xl bg-slate-900 border overflow-hidden flex items-center justify-center shadow-xl transition-all ${
       peer.isSpeaking ? 'border-emerald-500 ring-2 ring-emerald-500/50 shadow-emerald-500/20' : 'border-white/10'
     }`}>
-      {/* Remote Audio Track (Plays voice sound directly from remote peer!) */}
+      {/* Remote Audio Track */}
       <audio ref={audioRef} autoPlay playsInline />
 
       {hasVideo ? (
@@ -760,10 +941,56 @@ const RemotePeerTile: React.FC<{ peer: PeerInfo; stream?: MediaStream }> = ({ pe
         </button>
       )}
 
+      {/* Top Right: Local Peer Volume & Mute Controls */}
+      <div className="absolute top-3 right-3 flex items-center gap-1.5 z-20">
+        
+        {/* Local Volume Slider Popup */}
+        {showVolumeSlider && (
+          <div className="bg-slate-950/90 backdrop-blur-md px-3 py-1.5 rounded-xl border border-white/10 flex items-center gap-2 animate-in fade-in zoom-in-95">
+            <span className="text-[10px] font-mono text-slate-300 font-bold">{volume}%</span>
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={isLocallyMuted ? 0 : volume}
+              onChange={(e) => onVolumeChange(parseInt(e.target.value, 10))}
+              className="w-20 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-400"
+            />
+          </div>
+        )}
+
+        <button
+          onClick={() => setShowVolumeSlider(prev => !prev)}
+          className={`p-1.5 rounded-xl backdrop-blur-md transition-colors cursor-pointer text-xs ${
+            showVolumeSlider ? 'bg-sky-500/30 text-sky-300' : 'bg-slate-950/70 hover:bg-slate-900 text-slate-300 border border-white/10'
+          }`}
+          title="Гучність співрозмовника"
+        >
+          <Volume2 className="w-3.5 h-3.5" />
+        </button>
+
+        <button
+          onClick={onToggleMute}
+          className={`p-1.5 rounded-xl backdrop-blur-md transition-colors cursor-pointer text-xs ${
+            isLocallyMuted 
+              ? 'bg-rose-500/30 text-rose-400 border border-rose-500/40' 
+              : 'bg-slate-950/70 hover:bg-slate-900 text-slate-300 border border-white/10'
+          }`}
+          title={isLocallyMuted ? 'Увімкнути звук співрозмовника' : 'Заглушити співрозмовника у себе'}
+        >
+          {isLocallyMuted ? <VolumeX className="w-3.5 h-3.5 text-rose-400" /> : <Volume2 className="w-3.5 h-3.5 text-emerald-400" />}
+        </button>
+      </div>
+
       {/* Bottom Overlay Label */}
       <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between px-3 py-1.5 rounded-xl bg-slate-950/80 backdrop-blur-md text-[11px] font-bold border border-white/10">
         <span className="truncate text-slate-200">{peer.name}</span>
         <div className="flex items-center gap-1.5">
+          {isLocallyMuted && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-400 uppercase font-black">
+              MUTED
+            </span>
+          )}
           {peer.isMuted ? (
             <MicOff className="w-3.5 h-3.5 text-rose-400" />
           ) : (

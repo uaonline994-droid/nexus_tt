@@ -59,6 +59,9 @@ import { QuickAddNewsModal } from './components/QuickAddNewsModal';
 import { QuickAddLinkModal } from './components/QuickAddLinkModal';
 import { QuickAvatarModal } from './components/QuickAvatarModal';
 import { Toast } from './components/Toast';
+import { UserProfileModal } from './components/UserProfileModal';
+import { DirectChat } from './components/DirectChat';
+import { NotificationPermissionModal } from './components/NotificationPermissionModal';
 
 // Google G-Logo SVG Component
 const GoogleIcon = () => (
@@ -83,8 +86,36 @@ const GoogleIcon = () => (
 );
 
 export default function App() {
-  // Navigation View: 'bio' | 'chat'
-  const [currentView, setCurrentView] = useState<'bio' | 'chat'>('bio');
+  // Navigation View: 'bio' | 'chat' | 'direct_chat'
+  const [currentView, setCurrentView] = useState<'bio' | 'chat' | 'direct_chat'>('bio');
+
+  // Direct 1-on-1 Chat Partner
+  const [activeDirectChatPartner, setActiveDirectChatPartner] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    avatar: string;
+    username?: string;
+    profileId?: string;
+    isAdmin?: boolean;
+    deviceModel?: string;
+  } | null>(null);
+
+  // User Profile Modal
+  const [selectedUserProfile, setSelectedUserProfile] = useState<{
+    id: string;
+    name: string;
+    email: string;
+    avatar: string;
+    username?: string;
+    profileId?: string;
+    isAdmin?: boolean;
+    deviceModel?: string;
+  } | null>(null);
+  const [isUserProfileModalOpen, setIsUserProfileModalOpen] = useState<boolean>(false);
+
+  // Push Notification Permission Modal (especially for mobile)
+  const [isNotificationModalOpen, setIsNotificationModalOpen] = useState<boolean>(false);
 
   // Main Profile State
   const [profile, setProfile] = useState<BioProfile>(getInitialProfile);
@@ -96,6 +127,7 @@ export default function App() {
     isAdmin: boolean;
     profileId?: string;
     username?: string;
+    deviceModel?: string;
   } | null>(null);
 
   // User Registration State (Only opens when user interacts with chat)
@@ -267,12 +299,15 @@ export default function App() {
         }
       }
     } catch (err: any) {
-      console.error('Firebase Auth error:', err);
-      if (err.code === 'auth/popup-closed-by-user') {
-        showToast('Вікно вибору акаунта було закрите', 'info');
-      } else if (err.code === 'auth/cancelled-popup-request') {
-        // Ignored
+      const code = err?.code || '';
+      if (code === 'auth/popup-closed-by-user') {
+        showToast('Вхід скасовано (вікно закрито)', 'info');
+      } else if (code === 'auth/cancelled-popup-request') {
+        // Suppress duplicate popup request errors
+      } else if (code === 'auth/popup-blocked') {
+        showToast('Спливаюче вікно входу було заблоковане браузером. Дозвольте спливаючі вікна для цього сайту.', 'error');
       } else {
+        console.error('Firebase Auth unexpected error:', err);
         showToast('Помилка авторизації: ' + (err?.message || 'Спробуйте ще раз'), 'error');
       }
     } finally {
@@ -431,8 +466,28 @@ export default function App() {
 
       <Toast toasts={toasts} onDismiss={removeToast} />
 
-      {/* VIEW 1: GENERAL CHAT (TELEGRAM-STYLE VIEW) */}
-      {currentView === 'chat' ? (
+      {/* VIEW 1: DIRECT 1-ON-1 CHAT (TELEGRAM-STYLE) */}
+      {currentView === 'direct_chat' && currentUser && activeDirectChatPartner ? (
+        <div className="w-full max-w-2xl h-[92vh] sm:h-[88vh] rounded-[32px] sm:rounded-[36px] bg-white shadow-2xl border border-slate-200/80 overflow-hidden flex flex-col relative animate-in fade-in">
+          <DirectChat
+            currentUser={currentUser}
+            partner={activeDirectChatPartner}
+            onBack={() => {
+              soundService.playClickSound();
+              setCurrentView('chat');
+            }}
+            onOpenProfile={(user) => {
+              setSelectedUserProfile(user);
+              setIsUserProfileModalOpen(true);
+            }}
+            onStartCall={(partner) => {
+              const directRoomId = 'room_p2p_' + [currentUser.id, partner.id].sort().join('_');
+              handleOpenWebRoom(directRoomId, `Приватний дзвінок: ${partner.name}`, true);
+            }}
+          />
+        </div>
+      ) : currentView === 'chat' ? (
+        /* VIEW 2: GENERAL CHAT (TELEGRAM-STYLE VIEW) */
         <GeneralChat
           onBack={() => {
             soundService.playClickSound();
@@ -450,9 +505,24 @@ export default function App() {
           }}
           webRoomSettings={webRoomSettings}
           onOpenWebRoom={handleOpenWebRoom}
+          onOpenDirectChat={(targetUser) => {
+            if (!currentUser) {
+              handleGoogleSignInClick();
+              return;
+            }
+            setActiveDirectChatPartner(targetUser);
+            setCurrentView('direct_chat');
+          }}
+          onOpenUserProfile={(targetUser) => {
+            setSelectedUserProfile(targetUser);
+            setIsUserProfileModalOpen(true);
+          }}
+          onOpenNotificationModal={() => {
+            setIsNotificationModalOpen(true);
+          }}
         />
       ) : (
-        /* VIEW 2: MAIN BIO PROFILE PAGE (Frosted Clean Light Aesthetic) */
+        /* VIEW 3: MAIN BIO PROFILE PAGE (Frosted Clean Light Aesthetic) */
         <div className="relative z-10 w-full max-w-[450px] flex flex-col items-center frosted-main-card rounded-[36px] sm:rounded-[44px] p-5 sm:p-7 my-3 sm:my-6 transition-all duration-300 animate-in fade-in">
           
           {/* Top Control Bar */}
@@ -781,6 +851,38 @@ export default function App() {
         settings={webRoomSettings}
         onUpdateSettings={handleUpdateWebRoomSettings}
         hasAccess={hasWebRoomAccess}
+      />
+
+      {/* USER PROFILE MODAL (Click on Avatar in Chat or Direct Chat) */}
+      <UserProfileModal
+        isOpen={isUserProfileModalOpen}
+        onClose={() => setIsUserProfileModalOpen(false)}
+        targetUser={selectedUserProfile}
+        onStartDirectChat={(target) => {
+          if (!currentUser) {
+            handleGoogleSignInClick();
+            return;
+          }
+          setActiveDirectChatPartner(target);
+          setCurrentView('direct_chat');
+        }}
+        onStartCall={(target) => {
+          if (!currentUser) {
+            handleGoogleSignInClick();
+            return;
+          }
+          const directRoomId = 'room_p2p_' + [currentUser.id, target.id].sort().join('_');
+          handleOpenWebRoom(directRoomId, `Приватний дзвінок: ${target.name}`, true);
+        }}
+      />
+
+      {/* NOTIFICATION PERMISSION MODAL (Especially for mobile devices) */}
+      <NotificationPermissionModal
+        isOpen={isNotificationModalOpen}
+        onClose={() => setIsNotificationModalOpen(false)}
+        onPermissionGranted={() => {
+          showToast('🔔 Push-сповіщення успішно дозволено!', 'success');
+        }}
       />
 
       {/* FULL ADMIN MODAL */}

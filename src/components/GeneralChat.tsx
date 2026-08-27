@@ -37,11 +37,15 @@ interface GeneralChatProps {
     isAdmin: boolean;
     profileId?: string;
     username?: string;
+    deviceModel?: string;
   } | null;
   onLoginGoogle: () => Promise<void>;
   onRequireRegistration?: () => void;
   webRoomSettings: WebRoomSettings;
   onOpenWebRoom: (roomId: string, roomName: string, isPrivate?: boolean) => void;
+  onOpenDirectChat?: (targetUser: { id: string; name: string; email: string; avatar: string; username?: string; profileId?: string; isAdmin?: boolean; deviceModel?: string }) => void;
+  onOpenUserProfile?: (targetUser: { id: string; name: string; email: string; avatar: string; username?: string; profileId?: string; isAdmin?: boolean; deviceModel?: string }) => void;
+  onOpenNotificationModal?: () => void;
 }
 
 export const GeneralChat: React.FC<GeneralChatProps> = ({
@@ -51,7 +55,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   onLoginGoogle,
   onRequireRegistration,
   webRoomSettings,
-  onOpenWebRoom
+  onOpenWebRoom,
+  onOpenDirectChat,
+  onOpenUserProfile,
+  onOpenNotificationModal
 }) => {
   const [inputText, setInputText] = useState('');
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
@@ -290,6 +297,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   // Request Web Push Notification Permission
   const handleRequestPushNotification = async () => {
     soundService.playClickSound();
+    if (onOpenNotificationModal) {
+      onOpenNotificationModal();
+      return;
+    }
     const granted = await webNotificationService.requestPermission();
     setNotifPermission(webNotificationService.permission);
     if (granted) {
@@ -297,6 +308,32 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         title: '🔔 Сповіщення NEXUS активовано',
         body: 'Ви будете миттєво отримувати сповіщення про згадки в чаті та дзвінки у кімнату!'
       });
+    }
+  };
+
+  // Open User Profile or Mention
+  const handleUserClick = (target: {
+    id: string;
+    name: string;
+    email: string;
+    avatar: string;
+    isAdmin?: boolean;
+    deviceModel?: string;
+  }) => {
+    soundService.playClickSound();
+    if (onOpenUserProfile) {
+      onOpenUserProfile({
+        id: target.id || target.email,
+        name: target.name,
+        email: target.email,
+        avatar: target.avatar,
+        isAdmin: target.isAdmin,
+        username: `@${target.email.split('@')[0]}`,
+        profileId: `#${(target.id || target.email).substring(0, 6)}`,
+        deviceModel: target.deviceModel
+      });
+    } else {
+      handleMentionUser(target.name);
     }
   };
 
@@ -607,9 +644,15 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
                 <img
                   src={msg.senderAvatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
                   alt={msg.senderName}
-                  onClick={() => handleMentionUser(msg.senderName)}
-                  className="w-7 h-7 rounded-full object-cover shrink-0 cursor-pointer hover:opacity-80 transition-opacity mb-0.5 shadow-xs"
-                  title={`Клікніть, щоб тегнути @${msg.senderName}`}
+                  onClick={() => handleUserClick({
+                    id: msg.senderId || msg.senderEmail,
+                    name: msg.senderName,
+                    email: msg.senderEmail,
+                    avatar: msg.senderAvatar,
+                    isAdmin: msg.isAdmin
+                  })}
+                  className="w-7 h-7 rounded-full object-cover shrink-0 cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-[#2481cc]/50 transition-all mb-0.5 shadow-xs"
+                  title={`Переглянути профіль @${msg.senderName}`}
                 />
               )}
 
@@ -745,6 +788,48 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
                       <AtSign className="w-3.5 h-3.5 text-[#2481cc]" />
                       <span>Згадати @{msg.senderName}</span>
                     </button>
+
+                    {/* Start Private Chat (1-on-1 direct messaging) */}
+                    {!isMyMsg && onOpenDirectChat && (
+                      <button
+                        onClick={() => {
+                          soundService.playClickSound();
+                          setActiveMenuMsgId(null);
+                          onOpenDirectChat({
+                            id: msg.senderId || msg.senderEmail,
+                            name: msg.senderName,
+                            email: msg.senderEmail,
+                            avatar: msg.senderAvatar,
+                            isAdmin: msg.isAdmin
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg hover:bg-sky-50 text-[#2481cc] flex items-center gap-2 text-left cursor-pointer font-medium"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5" />
+                        <span>Приватний чат</span>
+                      </button>
+                    )}
+
+                    {/* View User Profile */}
+                    {!isMyMsg && onOpenUserProfile && (
+                      <button
+                        onClick={() => {
+                          soundService.playClickSound();
+                          setActiveMenuMsgId(null);
+                          handleUserClick({
+                            id: msg.senderId || msg.senderEmail,
+                            name: msg.senderName,
+                            email: msg.senderEmail,
+                            avatar: msg.senderAvatar,
+                            isAdmin: msg.isAdmin
+                          });
+                        }}
+                        className="w-full px-2.5 py-1.5 rounded-lg hover:bg-slate-100 text-slate-700 flex items-center gap-2 text-left cursor-pointer font-medium"
+                      >
+                        <User className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Профіль користувача</span>
+                      </button>
+                    )}
 
                     {/* Private room invite */}
                     {!isMyMsg && (
