@@ -34,8 +34,11 @@ interface GeneralChatProps {
     email: string;
     avatar: string;
     isAdmin: boolean;
+    profileId?: string;
+    username?: string;
   } | null;
   onLoginGoogle: () => Promise<void>;
+  onRequireRegistration?: () => void;
   webRoomSettings: WebRoomSettings;
   onOpenWebRoom: (roomId: string, roomName: string, isPrivate?: boolean) => void;
 }
@@ -45,6 +48,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   messages,
   currentUser,
   onLoginGoogle,
+  onRequireRegistration,
   webRoomSettings,
   onOpenWebRoom
 }) => {
@@ -235,6 +239,11 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     if (e) e.preventDefault();
     if (!currentUser) {
       onLoginGoogle();
+      return;
+    }
+
+    if (!currentUser.profileId && onRequireRegistration) {
+      onRequireRegistration();
       return;
     }
 

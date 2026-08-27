@@ -107,3 +107,25 @@ export interface BioUser {
   avatar: string;
   isAdmin: boolean;
 }
+
+export interface SecurityAuditInfo {
+  email: string;
+  deviceModel: string;
+  location: string;
+  ipAddress?: string;
+  userAgent?: string;
+  registeredAt: number;
+}
+
+export interface UserProfile {
+  uid: string;
+  profileId: string; // Randomly generated e.g. #849201
+  nickname: string; // Придуманий нікнейм
+  username: string; // @ім'я користувача (бер нейм / handle)
+  email: string;
+  avatar: string;
+  isAdmin: boolean;
+  securityAudit?: SecurityAuditInfo;
+  createdAt: number;
+  updatedAt?: number;
+}

@@ -27,7 +27,7 @@ import {
   signOut, 
   onAuthStateChanged 
 } from './firebase';
-import { BioProfile, ToastMessage, ChatMessage, WebRoomSettings, BioLink, NewsPost, BioUser } from './types';
+import { BioProfile, ToastMessage, ChatMessage, WebRoomSettings, BioLink, NewsPost, BioUser, UserProfile } from './types';
 import { 
   getInitialProfile, 
   saveProfileToDatabase, 
@@ -42,6 +42,7 @@ import {
   DEFAULT_WEB_ROOM_SETTINGS
 } from './chatService';
 import { isMasterAdmin, reportSecurityIntrusion, MASTER_ADMIN_EMAIL } from './securityService';
+import { fetchUserProfile, getLocalUserProfile } from './userService';
 import { sanitizeProfilePayload } from './security';
 import { soundService } from './soundService';
 import { StatsSection } from './components/StatsSection';
@@ -51,6 +52,7 @@ import { LinksList } from './components/LinksList';
 import { AdminModal } from './components/AdminModal';
 import { GeneralChat } from './components/GeneralChat';
 import { WebRoomModal } from './components/WebRoomModal';
+import { UserRegistrationModal } from './components/UserRegistrationModal';
 import { QuickStatModal } from './components/QuickStatModal';
 import { QuickAddNewsModal } from './components/QuickAddNewsModal';
 import { QuickAddLinkModal } from './components/QuickAddLinkModal';
@@ -91,6 +93,17 @@ export default function App() {
     email: string;
     avatar: string;
     isAdmin: boolean;
+    profileId?: string;
+    username?: string;
+  } | null>(null);
+
+  // User Registration State (Only opens when user interacts with chat)
+  const [isRegistrationModalOpen, setIsRegistrationModalOpen] = useState<boolean>(false);
+  const [pendingAuthUser, setPendingAuthUser] = useState<{
+    uid: string;
+    email: string;
+    displayName?: string | null;
+    photoURL?: string | null;
   } | null>(null);
 
   const [isAdminOpen, setIsAdminOpen] = useState<boolean>(false);
@@ -126,20 +139,43 @@ export default function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
 
-  // 1. Firebase Auth State Listener
+  // 1. Firebase Auth State Listener & Profile Loader
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
       if (user && user.email) {
         const userIsAdmin = isMasterAdmin(user.email);
-        setCurrentUser({
-          id: user.uid,
-          name: user.displayName || user.email.split('@')[0],
-          email: user.email,
-          avatar: user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-          isAdmin: userIsAdmin
-        });
+        
+        // Check if user already has a saved profile in Database
+        const existingProfile = await fetchUserProfile(user.uid);
+        if (existingProfile) {
+          setCurrentUser({
+            id: user.uid,
+            name: existingProfile.nickname || user.displayName || user.email.split('@')[0],
+            email: user.email,
+            avatar: existingProfile.avatar || user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            isAdmin: userIsAdmin,
+            profileId: existingProfile.profileId,
+            username: existingProfile.username
+          });
+        } else {
+          // If no profile exists yet, prompt registration modal
+          setPendingAuthUser({
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL
+          });
+          setCurrentUser({
+            id: user.uid,
+            name: user.displayName || user.email.split('@')[0],
+            email: user.email,
+            avatar: user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            isAdmin: userIsAdmin
+          });
+        }
       } else {
         setCurrentUser(null);
+        setPendingAuthUser(null);
       }
     });
 
@@ -373,6 +409,13 @@ export default function App() {
           messages={chatMessages}
           currentUser={currentUser}
           onLoginGoogle={handleGoogleSignInClick}
+          onRequireRegistration={() => {
+            if (pendingAuthUser) {
+              setIsRegistrationModalOpen(true);
+            } else {
+              handleGoogleSignInClick();
+            }
+          }}
           webRoomSettings={webRoomSettings}
           onOpenWebRoom={handleOpenWebRoom}
         />
@@ -532,7 +575,11 @@ export default function App() {
               id="btn-general-chat-center"
               onClick={() => {
                 soundService.playClickSound();
-                setCurrentView('chat');
+                if (currentUser && !currentUser.profileId && pendingAuthUser) {
+                  setIsRegistrationModalOpen(true);
+                } else {
+                  setCurrentView('chat');
+                }
               }}
               className="group relative w-full h-12 rounded-2xl bg-[#2481cc] hover:bg-[#1f74b8] text-white font-bold text-xs uppercase tracking-wider flex items-center justify-between px-4 shadow-md shadow-[#2481cc]/25 hover:shadow-lg transition-all duration-200 cursor-pointer overflow-hidden sleek-button"
             >
@@ -616,6 +663,30 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* USER REGISTRATION & SECURITY PROFILE AUDIT MODAL (White Theme) */}
+      {pendingAuthUser && (
+        <UserRegistrationModal
+          isOpen={isRegistrationModalOpen && Boolean(pendingAuthUser)}
+          userAuth={pendingAuthUser}
+          onClose={() => setIsRegistrationModalOpen(false)}
+          onComplete={(newProfile) => {
+            setCurrentUser({
+              id: newProfile.uid,
+              name: newProfile.nickname,
+              email: newProfile.email,
+              avatar: newProfile.avatar,
+              isAdmin: newProfile.isAdmin,
+              profileId: newProfile.profileId,
+              username: newProfile.username
+            });
+            setIsRegistrationModalOpen(false);
+            setPendingAuthUser(null);
+            setCurrentView('chat');
+            showToast(`🎉 Профіль @${newProfile.username} (${newProfile.profileId}) створено та збережено в базу!`, 'success');
+          }}
+        />
       )}
 
       {/* QUICK STAT EDIT MODAL */}
