@@ -77,39 +77,47 @@ export async function computeSHA256(message: string): Promise<string> {
   return 'fallback_' + Math.abs(hash).toString(16);
 }
 
-// 4. Payload integrity validator
-export function sanitizeProfilePayload(payload: any) {
+// 4. Payload integrity validator with Safe Deep Merge (prevents data loss when saving single fields)
+export function sanitizeProfilePayload(payload: any, baseProfile?: any) {
   if (!payload || typeof payload !== 'object') {
     throw new Error('Невалідні дані профілю: очікується об\'єкт');
   }
 
+  const base = baseProfile || {};
+
   return {
-    displayName: sanitizeString(payload.displayName || 'NEXUS', 60),
-    handle: sanitizeString(payload.handle || '@chak.tt', 40),
-    bioText: sanitizeString(payload.bioText || '', 300),
-    avatarUrl: sanitizeUrl(payload.avatarUrl, 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80'),
-    promoCode: sanitizeString(payload.promoCode || '#NEXUS', 30),
+    displayName: sanitizeString(payload.displayName !== undefined ? payload.displayName : (base.displayName || 'NEXUS'), 60),
+    handle: sanitizeString(payload.handle !== undefined ? payload.handle : (base.handle || '@chak.tt'), 40),
+    bioText: sanitizeString(payload.bioText !== undefined ? payload.bioText : (base.bioText || ''), 400),
+    avatarUrl: sanitizeUrl(payload.avatarUrl !== undefined ? payload.avatarUrl : (base.avatarUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80')),
+    promoCode: sanitizeString(payload.promoCode !== undefined ? payload.promoCode : (base.promoCode || '#NEXUS'), 30),
     stats: {
-      followers: sanitizeString(payload.stats?.followers || '0', 20),
-      likes: sanitizeString(payload.stats?.likes || '0', 20),
-      views: sanitizeString(payload.stats?.views || '0', 20),
+      followers: sanitizeString(payload.stats?.followers !== undefined ? payload.stats.followers : (base.stats?.followers || '0'), 20),
+      likes: sanitizeString(payload.stats?.likes !== undefined ? payload.stats.likes : (base.stats?.likes || '0'), 20),
+      views: sanitizeString(payload.stats?.views !== undefined ? payload.stats.views : (base.stats?.views || '0'), 20),
     },
-    links: Array.isArray(payload.links) ? payload.links.slice(0, 30).map((l: any, idx: number) => ({
-      id: sanitizeString(l.id || `link_${idx}_${Date.now()}`, 40),
-      title: sanitizeString(l.title || 'Посилання', 80),
-      url: sanitizeUrl(l.url),
-      icon: sanitizeString(l.icon || 'globe', 30),
-      highlighted: Boolean(l.highlighted),
-      clicks: typeof l.clicks === 'number' && l.clicks >= 0 ? Math.floor(l.clicks) : 0
-    })) : [],
-    news: Array.isArray(payload.news) ? payload.news.slice(0, 50).map((n: any, idx: number) => ({
-      id: sanitizeString(n.id || `news_${idx}_${Date.now()}`, 40),
-      title: sanitizeString(n.title || 'Новина', 100),
-      content: sanitizeString(n.content || '', 500),
-      tag: sanitizeString(n.tag || 'INFO', 30),
-      isPinned: Boolean(n.isPinned),
-      date: sanitizeString(n.date || 'Сьогодні', 30),
-      createdAt: typeof n.createdAt === 'number' ? n.createdAt : Date.now()
-    })) : []
+    links: Array.isArray(payload.links)
+      ? payload.links.slice(0, 50).map((l: any, idx: number) => ({
+          id: sanitizeString(l.id || `link_${idx}_${Date.now()}`, 40),
+          title: sanitizeString(l.title || 'Посилання', 80),
+          url: sanitizeUrl(l.url),
+          icon: sanitizeString(l.icon || 'globe', 30),
+          highlighted: Boolean(l.highlighted),
+          clicks: typeof l.clicks === 'number' && l.clicks >= 0 ? Math.floor(l.clicks) : 0
+        }))
+      : (Array.isArray(base.links) ? base.links : []),
+    news: Array.isArray(payload.news)
+      ? payload.news.slice(0, 100).map((n: any, idx: number) => ({
+          id: sanitizeString(n.id || `news_${idx}_${Date.now()}`, 40),
+          title: sanitizeString(n.title || 'Новина', 100),
+          content: sanitizeString(n.content || '', 800),
+          tag: sanitizeString(n.tag || 'INFO', 30),
+          imageUrl: n.imageUrl ? sanitizeUrl(n.imageUrl) : undefined,
+          isPinned: Boolean(n.isPinned),
+          date: sanitizeString(n.date || 'Сьогодні', 30),
+          createdAt: typeof n.createdAt === 'number' ? n.createdAt : Date.now()
+        }))
+      : (Array.isArray(base.news) ? base.news : []),
+    updatedAt: Date.now()
   };
 }

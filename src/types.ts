@@ -144,3 +144,25 @@ export interface DirectMessage {
   timestamp: number;
 }
 
+export interface ProfileSnapshot {
+  id: string;
+  timestamp: number;
+  label: string; // e.g. "Оновлення статистики", "Додано новину", "Резервна копія"
+  profile: BioProfile;
+}
+
+export interface AuthUserAccount {
+  uid: string;
+  login: string; // Username / Login
+  nickname: string;
+  email: string;
+  passwordHash?: string;
+  passwordSalt?: string;
+  avatar: string;
+  profileId: string;
+  isAdmin: boolean;
+  authProvider: 'google' | 'password' | 'linked';
+  createdAt: number;
+  lastLoginAt: number;
+}
+
