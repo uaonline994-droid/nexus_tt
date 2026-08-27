@@ -146,6 +146,7 @@ const PROFILE_FILE = path.join(DATA_DIR, 'profile.json');
 const CHAT_FILE = path.join(DATA_DIR, 'chat_messages.json');
 const CHAT_SETTINGS_FILE = path.join(DATA_DIR, 'chat_settings.json');
 const CHAT_MODERATION_FILE = path.join(DATA_DIR, 'chat_moderation.json');
+const USER_PROFILES_FILE = path.join(DATA_DIR, 'user_profiles.json');
 const ADMIN_EMAIL = "a60840397@gmail.com";
 
 const INITIAL_CHAT_MESSAGES = [
@@ -254,6 +255,38 @@ function saveChatModeration(mod: any): boolean {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
     fs.writeFileSync(CHAT_MODERATION_FILE, JSON.stringify(mod, null, 2), 'utf-8');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function getUserProfiles(): any[] {
+  try {
+    if (!fs.existsSync(USER_PROFILES_FILE)) {
+      return [];
+    }
+    const raw = fs.readFileSync(USER_PROFILES_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveUserProfileServer(profile: any): boolean {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+    const list = getUserProfiles();
+    const existingIndex = list.findIndex((u: any) => u.uid === profile.uid || u.email === profile.email);
+    if (existingIndex >= 0) {
+      list[existingIndex] = { ...list[existingIndex], ...profile, updatedAt: Date.now() };
+    } else {
+      list.unshift({ ...profile, createdAt: profile.createdAt || Date.now(), updatedAt: Date.now() });
+    }
+    fs.writeFileSync(USER_PROFILES_FILE, JSON.stringify(list, null, 2), 'utf-8');
     return true;
   } catch (e) {
     return false;
@@ -716,6 +749,21 @@ app.get('/api/chat/moderation', (req, res) => {
 app.post('/api/chat/moderation', (req, res) => {
   saveChatModeration(req.body);
   res.json({ success: true, moderation: req.body });
+});
+
+// User Profiles API
+app.get('/api/users/list', (req, res) => {
+  res.json({ success: true, users: getUserProfiles() });
+});
+
+app.post('/api/users/profile', (req, res) => {
+  const profile = req.body;
+  if (profile && (profile.uid || profile.email)) {
+    saveUserProfileServer(profile);
+    res.json({ success: true, profile });
+  } else {
+    res.status(400).json({ success: false, error: 'Invalid profile data' });
+  }
 });
 
 // ==========================================

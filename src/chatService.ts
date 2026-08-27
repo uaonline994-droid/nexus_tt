@@ -349,12 +349,48 @@ export function subscribeToModerationState(onUpdate: (state: ChatModerationState
 }
 
 /**
+ * Automatically seeds initial messages to Firestore and Realtime Database
+ * so collections are immediately visible in the Firebase console.
+ */
+export async function seedInitialMessagesToFirebase(): Promise<void> {
+  try {
+    for (const msg of INITIAL_MESSAGES) {
+      // 1. RTDB Top Level
+      try {
+        const rtdbRef = ref(rtdb, `nexus_chat_messages/${msg.id}`);
+        await rtdbSet(rtdbRef, msg);
+        const nestedRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${msg.id}`);
+        await rtdbSet(nestedRef, msg);
+      } catch (e) {}
+
+      // 2. Direct REST to RTDB
+      try {
+        fetch(`https://fir-50300-default-rtdb.firebaseio.com/nexus_chat_messages/${msg.id}.json`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(msg)
+        }).catch(() => {});
+      } catch (e) {}
+
+      // 3. Firestore
+      try {
+        const firestoreRef = doc(db, 'nexus_chat_messages', msg.id);
+        await setDoc(firestoreRef, msg, { merge: true });
+      } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+/**
  * Subscribe to live chat messages (Server SSE + Polling + Firestore onSnapshot + Realtime Database onValue)
  * Ensures 1 unified chat where every message from anyone is visible to everyone in real time!
  */
 export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => void): () => void {
   let isSubscribed = true;
   let currentMessages: ChatMessage[] = getLocalChatMessages();
+
+  // Trigger non-blocking cloud seed to ensure collection exists
+  seedInitialMessagesToFirebase().catch(() => {});
 
   const handleUpdate = (incoming: ChatMessage[]) => {
     if (!isSubscribed) return;
@@ -395,9 +431,29 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
 
   // 2. Realtime Database onValue Continuous Real-Time Listener
   let unsubscribeRtdb: (() => void) | null = null;
+  let unsubscribeRtdbTopLevel: (() => void) | null = null;
   try {
     const dbRef = ref(rtdb, CHAT_MESSAGES_RTDB_PATH);
     unsubscribeRtdb = rtdbOnValue(dbRef, (snapshot) => {
+      if (!isSubscribed) return;
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        if (val) {
+          let list: ChatMessage[] = [];
+          if (Array.isArray(val)) {
+            list = val.filter(Boolean);
+          } else if (typeof val === 'object') {
+            list = Object.values(val) as ChatMessage[];
+          }
+          if (list.length > 0) {
+            handleUpdate(list);
+          }
+        }
+      }
+    });
+
+    const topLevelRef = ref(rtdb, 'nexus_chat_messages');
+    unsubscribeRtdbTopLevel = rtdbOnValue(topLevelRef, (snapshot) => {
       if (!isSubscribed) return;
       if (snapshot.exists()) {
         const val = snapshot.val();
@@ -502,6 +558,7 @@ export function subscribeToChatMessages(onUpdate: (messages: ChatMessage[]) => v
     }
     if (unsubscribeFirestore) unsubscribeFirestore();
     if (unsubscribeRtdb) unsubscribeRtdb();
+    if (unsubscribeRtdbTopLevel) unsubscribeRtdbTopLevel();
     if (typeof window !== 'undefined') {
       window.removeEventListener('nexus_chat_local_update', handleLocalEvent);
     }
@@ -591,17 +648,67 @@ export async function sendChatMessage(
     console.warn('Server chat post notice:', err);
   }
 
-  // 3. Save to Firebase Realtime Database
+// 3. Save to Firebase Realtime Database (SDK + REST API fallback)
   try {
     const messageRef = ref(rtdb, `${CHAT_MESSAGES_RTDB_PATH}/${newMsg.id}`);
     await rtdbSet(messageRef, newMsg);
-  } catch (err: any) {}
+    // Also save directly to top-level collection for convenience
+    const topLevelRef = ref(rtdb, `nexus_chat_messages/${newMsg.id}`);
+    await rtdbSet(topLevelRef, newMsg);
+  } catch (err: any) {
+    console.warn('RTDB SDK write notice:', err);
+  }
 
-  // 4. Save to Firestore
+  // Direct REST fallback to Firebase Realtime Database
   try {
+    fetch(`https://fir-50300-default-rtdb.firebaseio.com/nexus_chat_messages/${newMsg.id}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newMsg)
+    }).catch(() => {});
+  } catch (e) {}
+
+  // 4. Save to Firestore (Clean payload without undefined values)
+  try {
+    const firestorePayload: any = {
+      id: newMsg.id,
+      senderId: newMsg.senderId,
+      senderName: newMsg.senderName,
+      senderEmail: newMsg.senderEmail,
+      senderAvatar: newMsg.senderAvatar,
+      isAdmin: Boolean(newMsg.isAdmin),
+      text: newMsg.text,
+      timestamp: newMsg.timestamp,
+      mentionsAdmin: Boolean(newMsg.mentionsAdmin),
+      type: newMsg.type || 'text'
+    };
+
+    if (newMsg.replyTo) {
+      firestorePayload.replyTo = {
+        id: newMsg.replyTo.id,
+        senderName: newMsg.replyTo.senderName,
+        text: newMsg.replyTo.text
+      };
+    }
+
+    if (newMsg.roomData) {
+      firestorePayload.roomData = {
+        roomId: newMsg.roomData.roomId,
+        roomName: newMsg.roomData.roomName,
+        creatorEmail: newMsg.roomData.creatorEmail,
+        creatorName: newMsg.roomData.creatorName || '',
+        active: Boolean(newMsg.roomData.active),
+        isPrivate: Boolean(newMsg.roomData.isPrivate)
+      };
+      if (newMsg.roomData.targetEmail) firestorePayload.roomData.targetEmail = newMsg.roomData.targetEmail;
+      if (newMsg.roomData.targetName) firestorePayload.roomData.targetName = newMsg.roomData.targetName;
+    }
+
     const docRef = doc(db, 'nexus_chat_messages', newMsg.id);
-    await setDoc(docRef, newMsg);
-  } catch (err: any) {}
+    await setDoc(docRef, firestorePayload);
+  } catch (err: any) {
+    console.warn('Firestore message save notice:', err);
+  }
 
   return { success: true };
 }

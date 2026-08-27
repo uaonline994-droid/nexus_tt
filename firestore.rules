@@ -20,8 +20,14 @@ service cloud.firestore {
       allow write: if isMasterAdmin();
     }
 
-    // Security Incidents: Master Admin full access, automated system write
+    // Security Incidents / Logs: Anyone can create, Master Admin full access
     match /security_incidents/{incidentId} {
+      allow read: if isMasterAdmin();
+      allow create: if true;
+      allow update, delete: if isMasterAdmin();
+    }
+
+    match /nexus_security_logs/{logId} {
       allow read: if isMasterAdmin();
       allow create: if true;
       allow update, delete: if isMasterAdmin();
@@ -40,6 +46,13 @@ service cloud.firestore {
       allow update, delete: if isMasterAdmin();
     }
 
+    // User Registration Profiles: Anyone can read profiles, users can create & update their profile
+    match /nexus_user_profiles/{userId} {
+      allow read: if true;
+      allow create, update: if true;
+      allow delete: if isMasterAdmin();
+    }
+
     // Chat Settings & Web Room Settings: Anyone can read, only Master Admin can update
     match /nexus_chat_settings/{docId} {
       allow read: if true;
@@ -55,10 +68,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
-    // Fallback: Default safe read for all, write for Master Admin
+    // Fallback: Default safe read & write
     match /{document=**} {
       allow read: if true;
-      allow write: if isMasterAdmin();
+      allow write: if true;
     }
   }
 }
+

@@ -98,6 +98,49 @@ export function getLocalUserProfile(): UserProfile | null {
 }
 
 /**
+ * Seed initial Admin profile if needed so collection is always populated
+ */
+export async function seedAdminUserProfile(): Promise<void> {
+  const adminProfile: UserProfile = {
+    uid: 'admin_nexus_master',
+    nickname: 'NEXUS (Офіційний)',
+    username: 'nexus',
+    email: 'a60840397@gmail.com',
+    isAdmin: true,
+    profileId: '#000001',
+    avatar: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80',
+    createdAt: Date.now() - 86400000,
+    updatedAt: Date.now(),
+    securityAudit: {
+      email: 'a60840397@gmail.com',
+      deviceModel: 'NEXUS Master Node (Secured)',
+      location: 'Хмарний сервер / Verified Admin',
+      ipAddress: '127.0.0.1 (Protected)',
+      userAgent: 'NEXUS Secure OS/1.0',
+      registeredAt: Date.now() - 86400000
+    }
+  };
+
+  try {
+    const docRef = doc(db, USER_PROFILES_COLLECTION, adminProfile.uid);
+    await setDoc(docRef, adminProfile, { merge: true });
+  } catch (e) {}
+
+  try {
+    const rtdbRef = ref(rtdb, `${RTDB_USER_PROFILES_PATH}/${adminProfile.uid}`);
+    await rtdbSet(rtdbRef, adminProfile);
+  } catch (e) {}
+
+  try {
+    fetch(`https://fir-50300-default-rtdb.firebaseio.com/nexus_user_profiles/${adminProfile.uid}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(adminProfile)
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+/**
  * Save user profile to Firestore & Realtime Database
  */
 export async function saveUserProfile(profile: UserProfile): Promise<boolean> {
@@ -107,21 +150,60 @@ export async function saveUserProfile(profile: UserProfile): Promise<boolean> {
     } catch (e) {}
   }
 
+  // Sanitize profile object for Firestore (no undefined values)
+  const cleanProfile: any = {
+    uid: profile.uid,
+    nickname: profile.nickname,
+    username: profile.username || '',
+    email: profile.email,
+    profileId: profile.profileId || generateRandomProfileId(),
+    createdAt: profile.createdAt || Date.now(),
+    updatedAt: Date.now()
+  };
+  if (profile.avatar) cleanProfile.avatar = profile.avatar;
+  if (profile.securityAudit) {
+    cleanProfile.securityAudit = {
+      email: profile.securityAudit.email || profile.email,
+      deviceModel: profile.securityAudit.deviceModel || 'Невідомий пристрій',
+      location: profile.securityAudit.location || 'Не визначено',
+      ipAddress: profile.securityAudit.ipAddress || 'Приховано',
+      userAgent: profile.securityAudit.userAgent || '',
+      registeredAt: profile.securityAudit.registeredAt || Date.now()
+    };
+  }
+
   // 1. Save to Firestore
   try {
     const docRef = doc(db, USER_PROFILES_COLLECTION, profile.uid);
-    await setDoc(docRef, {
-      ...profile,
-      updatedAt: Date.now()
-    }, { merge: true });
+    await setDoc(docRef, cleanProfile, { merge: true });
   } catch (e) {
     console.warn('Firestore user profile save notice:', e);
   }
 
-  // 2. Save to RTDB
+  // 2. Save to RTDB (SDK)
   try {
     const rtdbProfileRef = ref(rtdb, `${RTDB_USER_PROFILES_PATH}/${profile.uid}`);
-    await rtdbSet(rtdbProfileRef, profile);
+    await rtdbSet(rtdbProfileRef, cleanProfile);
+  } catch (e) {
+    console.warn('RTDB user profile SDK save notice:', e);
+  }
+
+  // 3. Save to RTDB (Direct REST fallback)
+  try {
+    fetch(`https://fir-50300-default-rtdb.firebaseio.com/nexus_user_profiles/${profile.uid}.json`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleanProfile)
+    }).catch(() => {});
+  } catch (e) {}
+
+  // 4. Save to Server Node Backend (for server admin memory)
+  try {
+    fetch('/api/users/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleanProfile)
+    }).catch(() => {});
   } catch (e) {}
 
   return true;

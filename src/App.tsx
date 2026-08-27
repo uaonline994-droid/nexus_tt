@@ -39,10 +39,11 @@ import {
   subscribeToWebRoomSettings, 
   saveWebRoomSettings, 
   checkUserWebRoomAccess,
+  seedInitialMessagesToFirebase,
   DEFAULT_WEB_ROOM_SETTINGS
 } from './chatService';
 import { isMasterAdmin, reportSecurityIntrusion, MASTER_ADMIN_EMAIL } from './securityService';
-import { fetchUserProfile, getLocalUserProfile } from './userService';
+import { fetchUserProfile, getLocalUserProfile, seedAdminUserProfile } from './userService';
 import { sanitizeProfilePayload } from './security';
 import { soundService } from './soundService';
 import { StatsSection } from './components/StatsSection';
@@ -138,6 +139,12 @@ export default function App() {
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   };
+
+  // Cloud Database Seeder on Startup
+  useEffect(() => {
+    seedInitialMessagesToFirebase().catch(() => {});
+    seedAdminUserProfile().catch(() => {});
+  }, []);
 
   // 1. Firebase Auth State Listener & Profile Loader
   useEffect(() => {

@@ -45,12 +45,88 @@
         }
       },
       "required": ["displayName", "handle"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Real-time chat message entity in general chat",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique message ID"
+        },
+        "senderId": {
+          "type": "string",
+          "description": "User identifier"
+        },
+        "senderName": {
+          "type": "string",
+          "description": "Sender display nickname"
+        },
+        "senderEmail": {
+          "type": "string",
+          "description": "Sender email"
+        },
+        "senderAvatar": {
+          "type": "string",
+          "description": "Sender avatar URL"
+        },
+        "text": {
+          "type": "string",
+          "description": "Message text body",
+          "maxLength": 1000
+        },
+        "timestamp": {
+          "type": "number",
+          "description": "Epoch timestamp"
+        }
+      },
+      "required": ["id", "senderEmail", "text", "timestamp"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Registered user profile with nickname, username, and device audit",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "User UID"
+        },
+        "nickname": {
+          "type": "string",
+          "description": "User nickname",
+          "maxLength": 60
+        },
+        "username": {
+          "type": "string",
+          "description": "User handle",
+          "maxLength": 40
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address"
+        },
+        "profileId": {
+          "type": "string",
+          "description": "Unique random profile identifier"
+        }
+      },
+      "required": ["uid", "nickname", "email"]
     }
   },
   "firestore": {
     "/nexus_profile/{profileId}": {
       "schema": "BioProfile",
       "description": "Store for public bio profile documents, writable exclusively by the verified administrator account"
+    },
+    "/nexus_chat_messages/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Store for real-time chat messages readable and writable by users"
+    },
+    "/nexus_user_profiles/{userId}": {
+      "schema": "UserProfile",
+      "description": "Store for user registration profiles and device audit metadata"
     }
   }
 }
+
