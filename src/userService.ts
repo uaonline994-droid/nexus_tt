@@ -149,3 +149,62 @@ export async function fetchUserProfile(uid: string): Promise<UserProfile | null>
 
   return null;
 }
+
+/**
+ * Subscribe to all user profiles in real-time (Firestore + Realtime DB)
+ */
+export function subscribeToAllUserProfiles(onUpdate: (profiles: UserProfile[]) => void): () => void {
+  let isSubscribed = true;
+  let cachedProfiles: Map<string, UserProfile> = new Map();
+
+  const emit = () => {
+    if (!isSubscribed) return;
+    const list = Array.from(cachedProfiles.values());
+    list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    onUpdate(list);
+  };
+
+  // 1. Firestore listener
+  let unsubFirestore: (() => void) | null = null;
+  try {
+    const colRef = collection(db, USER_PROFILES_COLLECTION);
+    unsubFirestore = onSnapshot(colRef, (snap) => {
+      if (!isSubscribed) return;
+      snap.forEach((docSnap) => {
+        const data = docSnap.data() as UserProfile;
+        if (data && data.uid) {
+          cachedProfiles.set(data.uid, data);
+        }
+      });
+      emit();
+    }, (err) => {
+      console.warn('Firestore user profiles listener warning:', err);
+    });
+  } catch (e) {}
+
+  // 2. Realtime Database listener
+  let unsubRtdb: (() => void) | null = null;
+  try {
+    const rtdbRef = ref(rtdb, RTDB_USER_PROFILES_PATH);
+    unsubRtdb = rtdbOnValue(rtdbRef, (snap) => {
+      if (!isSubscribed) return;
+      if (snap.exists()) {
+        const val = snap.val();
+        if (val && typeof val === 'object') {
+          Object.values(val).forEach((p: any) => {
+            if (p && p.uid) {
+              cachedProfiles.set(p.uid, p);
+            }
+          });
+          emit();
+        }
+      }
+    });
+  } catch (e) {}
+
+  return () => {
+    isSubscribed = false;
+    if (unsubFirestore) unsubFirestore();
+    if (unsubRtdb) unsubRtdb();
+  };
+}

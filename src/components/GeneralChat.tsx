@@ -61,6 +61,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
   const [isSoundMuted, setIsSoundMuted] = useState(soundService.isMuted);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [visitedMentionIds, setVisitedMentionIds] = useState<Set<string>>(new Set());
   const [chatSettings, setChatSettings] = useState<ChatSettings>(DEFAULT_CHAT_SETTINGS);
   const [moderationState, setModerationState] = useState<ChatModerationState>({ mutedUsers: {}, bannedUsers: {} });
 
@@ -107,10 +108,14 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   const mentionMessages = useMemo(() => {
     if (!currentUser) return [];
     const myName = currentUser.name.toLowerCase();
+    const myUsername = currentUser.username ? currentUser.username.toLowerCase() : '';
     return visibleMessages.filter((msg) => {
       if (msg.senderEmail.toLowerCase() === userEmailLower) return false;
       const textLower = msg.text.toLowerCase();
       if (isAdmin && (textLower.includes('@nexus') || textLower.includes('@chak.tt'))) {
+        return true;
+      }
+      if (myUsername && textLower.includes(`@${myUsername}`)) {
         return true;
       }
       if (myName && textLower.includes(`@${myName}`)) {
@@ -119,6 +124,11 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       return false;
     });
   }, [visibleMessages, currentUser, userEmailLower, isAdmin]);
+
+  // Unvisited mentions for brackets counter [@ 1], [@ 2]
+  const unvisitedMentions = useMemo(() => {
+    return mentionMessages.filter((msg) => !visitedMentionIds.has(msg.id));
+  }, [mentionMessages, visitedMentionIds]);
 
   // Find active incoming private room call for current user
   const activeIncomingCall = useMemo(() => {
@@ -146,7 +156,10 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         // Check if mentioned
         const textLower = latestMsg.text.toLowerCase();
         const isMentioned = (isAdmin && (textLower.includes('@nexus') || textLower.includes('@chak.tt'))) ||
-          (currentUser && textLower.includes(`@${currentUser.name.toLowerCase()}`));
+          (currentUser && (
+            (currentUser.username && textLower.includes(`@${currentUser.username.toLowerCase()}`)) ||
+            textLower.includes(`@${currentUser.name.toLowerCase()}`)
+          ));
 
         if (latestMsg.type === 'web_room_invite' && latestMsg.roomData?.targetEmail?.toLowerCase() === userEmailLower) {
           soundService.playInviteSound();
@@ -173,11 +186,12 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Scroll directly to Telegram-style @ mention message
+  // Scroll directly to Telegram-style @ mention message & decrement unvisited counter
   const handleScrollToMention = () => {
-    if (mentionMessages.length === 0) return;
+    if (unvisitedMentions.length === 0) return;
     soundService.playClickSound();
-    const targetMsg = mentionMessages[mentionMessages.length - 1];
+    // Jump to the oldest unvisited mention
+    const targetMsg = unvisitedMentions[0];
     if (targetMsg) {
       const el = document.getElementById(`chat-msg-${targetMsg.id}`);
       if (el) {
@@ -185,6 +199,12 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         setHighlightedMsgId(targetMsg.id);
         setTimeout(() => setHighlightedMsgId(null), 3000);
       }
+      // Decrement counter by marking this mention as visited
+      setVisitedMentionIds((prev) => {
+        const next = new Set(prev);
+        next.add(targetMsg.id);
+        return next;
+      });
     }
   };
 
@@ -348,7 +368,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
   };
 
   return (
-    <div className="relative w-full max-w-xl mx-auto h-[92vh] sm:h-[88vh] flex flex-col rounded-[28px] bg-[#e6ebee] border border-slate-300/80 shadow-2xl overflow-hidden animate-in slide-in-from-right duration-300">
+    <div className="fixed inset-0 sm:relative sm:inset-auto z-40 w-full sm:max-w-xl mx-auto h-[100dvh] sm:h-[88vh] flex flex-col sm:rounded-[28px] bg-[#e6ebee] border-0 sm:border border-slate-300/80 shadow-2xl overflow-hidden animate-in slide-in-from-right duration-300 select-none">
       
       {/* Telegram Top Header Bar */}
       <div className="h-14 px-3.5 bg-[#2481cc] text-white flex items-center justify-between shrink-0 z-20 shadow-sm">
@@ -641,19 +661,17 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* FLOATING TELEGRAM-STYLE "@" BUTTON (Bottom Right Mention Jump Button) */}
-      {mentionMessages.length > 0 && (
+      {/* FLOATING TELEGRAM-STYLE "@" BUTTON WITH BRACKETS [ @ 2 ] */}
+      {unvisitedMentions.length > 0 && (
         <button
           onClick={handleScrollToMention}
-          className="absolute right-4 bottom-22 z-20 w-10 h-10 rounded-full bg-white hover:bg-slate-50 text-[#2481cc] font-bold shadow-md border border-slate-200 flex items-center justify-center transition-all cursor-pointer active:scale-95 group"
-          title="Перейти до повідомлення, де вас тегнули"
+          className="absolute right-4 bottom-22 z-20 h-10 px-3.5 rounded-full bg-white hover:bg-slate-50 text-[#2481cc] font-bold shadow-lg border border-slate-200/90 flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 group animate-bounce"
+          title={`Перейти до повідомлення, де вас тегнули (${unvisitedMentions.length})`}
         >
-          <div className="flex items-center justify-center">
-            <span className="text-sm font-bold">@</span>
-            <span className="ml-0.5 px-1 py-0.2 rounded-full bg-[#2481cc] text-white text-[9px] font-bold">
-              {mentionMessages.length}
-            </span>
-          </div>
+          <span className="text-sm font-bold">@</span>
+          <span className="px-1.5 py-0.5 rounded-full bg-[#2481cc] text-white text-[10px] font-mono font-bold tracking-tight">
+            [{unvisitedMentions.length}]
+          </span>
         </button>
       )}
 
@@ -693,7 +711,7 @@ export const GeneralChat: React.FC<GeneralChatProps> = ({
       )}
 
       {/* Telegram Style Bottom Input Area */}
-      <div className="p-2.5 bg-white border-t border-slate-200 shrink-0 z-10">
+      <div className="p-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] bg-white border-t border-slate-200 shrink-0 z-10">
         
         {/* Quick Tag @nexus & Slowmode indicator */}
         <div className="flex items-center justify-between gap-2 mb-1.5 px-1">

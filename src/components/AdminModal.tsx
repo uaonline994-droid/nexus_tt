@@ -37,7 +37,7 @@ import {
   UserPlus,
   ShieldAlert
 } from 'lucide-react';
-import { BioProfile, BioLink, TikTokStats, NewsPost, WebRoomSettings, ChatSettings, ChatModerationState } from '../types';
+import { BioProfile, BioLink, TikTokStats, NewsPost, WebRoomSettings, ChatSettings, ChatModerationState, UserProfile, ChatMessage } from '../types';
 import { checkFirestoreConnection } from '../databaseService';
 import { 
   subscribeToWebRoomSettings, 
@@ -47,6 +47,8 @@ import {
   subscribeToModerationState, 
   setModerationStatus, 
   clearAllChatMessages,
+  deleteChatMessage,
+  subscribeToChatMessages,
   DEFAULT_CHAT_SETTINGS,
   DEFAULT_WEB_ROOM_SETTINGS
 } from '../chatService';
@@ -57,6 +59,7 @@ import {
   SecurityIncident, 
   MASTER_ADMIN_EMAIL 
 } from '../securityService';
+import { subscribeToAllUserProfiles } from '../userService';
 
 interface AdminModalProps {
   isOpen: boolean;
@@ -75,7 +78,7 @@ export const AdminModal: React.FC<AdminModalProps> = ({
   onLogout,
   adminEmail
 }) => {
-  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'links' | 'stats' | 'access' | 'database' | 'security'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'news' | 'links' | 'stats' | 'access' | 'database' | 'security' | 'users'>('profile');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [cloudStatus, setCloudStatus] = useState<{ loading: boolean; connected: boolean | null; message: string }>({
@@ -83,6 +86,12 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     connected: null,
     message: ''
   });
+
+  // User Profiles & Realtime Database Search State
+  const [allUserProfiles, setAllUserProfiles] = useState<UserProfile[]>([]);
+  const [allChatMessages, setAllChatMessages] = useState<ChatMessage[]>([]);
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+  const [selectedUserEmailForMessages, setSelectedUserEmailForMessages] = useState<string | null>(null);
 
   // Access & Moderation State
   const [webRoomSettings, setWebRoomSettings] = useState<WebRoomSettings>(DEFAULT_WEB_ROOM_SETTINGS);
@@ -107,18 +116,22 @@ export const AdminModal: React.FC<AdminModalProps> = ({
     }
   }, [isOpen, adminEmail, onClose]);
 
-  // Subscribe to real-time settings and security incidents when opened
+  // Subscribe to real-time settings, users, and security incidents when opened
   useEffect(() => {
     if (!isOpen) return;
     const unsubWeb = subscribeToWebRoomSettings((ws) => setWebRoomSettings(ws));
     const unsubChat = subscribeToChatSettings((cs) => setChatSettings(cs));
     const unsubMod = subscribeToModerationState((ms) => setModerationState(ms));
     const unsubSec = subscribeToSecurityIncidents((incidents) => setSecurityIncidents(incidents));
+    const unsubUsers = subscribeToAllUserProfiles((profiles) => setAllUserProfiles(profiles));
+    const unsubMsgs = subscribeToChatMessages((msgs) => setAllChatMessages(msgs));
     return () => {
       unsubWeb();
       unsubChat();
       unsubMod();
       unsubSec();
+      unsubUsers();
+      unsubMsgs();
     };
   }, [isOpen]);
 
@@ -559,6 +572,17 @@ export const AdminModal: React.FC<AdminModalProps> = ({
           >
             <Users className="w-3.5 h-3.5" />
             Доступ & Чат
+          </button>
+          <button
+            onClick={() => setActiveTab('users')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all whitespace-nowrap cursor-pointer ${
+              activeTab === 'users' 
+                ? 'bg-blue-600 text-white shadow-sm' 
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            Користувачі & Статистика ({allUserProfiles.length})
           </button>
           <button
             onClick={() => setActiveTab('database')}
@@ -1667,6 +1691,226 @@ export const AdminModal: React.FC<AdminModalProps> = ({
                     ))}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 8: USERS DATABASE & STATISTICS (Realtime Search & Messages) */}
+          {activeTab === 'users' && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              {/* Summary Stats Overview */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Користувачів</div>
+                  <div className="text-lg sm:text-xl font-black text-blue-600 flex items-center gap-1.5">
+                    <Users className="w-5 h-5" />
+                    <span>{allUserProfiles.length}</span>
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Повідомлень у чаті</div>
+                  <div className="text-lg sm:text-xl font-black text-indigo-600 flex items-center gap-1.5">
+                    <MessageSquare className="w-5 h-5" />
+                    <span>{allChatMessages.length}</span>
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Мобільних пристроїв</div>
+                  <div className="text-lg sm:text-xl font-black text-emerald-600 flex items-center gap-1.5">
+                    <span>📱</span>
+                    <span>
+                      {allUserProfiles.filter(p => p.securityAudit?.deviceModel?.includes('iPhone') || p.securityAudit?.deviceModel?.includes('Android')).length}
+                    </span>
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-1">
+                  <div className="text-[10px] uppercase font-bold text-slate-400">Компʼютерів / ПК</div>
+                  <div className="text-lg sm:text-xl font-black text-amber-600 flex items-center gap-1.5">
+                    <span>💻</span>
+                    <span>
+                      {allUserProfiles.filter(p => !p.securityAudit?.deviceModel?.includes('iPhone') && !p.securityAudit?.deviceModel?.includes('Android')).length}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Realtime User Search Input */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase text-slate-800 tracking-wider flex items-center gap-2">
+                    <Users className="w-4 h-4 text-blue-600" />
+                    Пошук у Базі Користувачів ({allUserProfiles.length})
+                  </span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Live Firestore & RTDB
+                  </span>
+                </div>
+
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    placeholder="Швидкий пошук за Нікнеймом, @юзернеймом, ID (#849201), поштою чи моделлю..."
+                    className="w-full h-11 pl-4 pr-10 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-800 outline-none focus:bg-white focus:border-blue-500 transition-all"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      onClick={() => setUserSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs p-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Users List with Device & Messages Inspection */}
+              <div className="space-y-3">
+                {(() => {
+                  const filtered = allUserProfiles.filter((u) => {
+                    if (!userSearchQuery.trim()) return true;
+                    const q = userSearchQuery.toLowerCase().trim();
+                    return (
+                      u.nickname?.toLowerCase().includes(q) ||
+                      u.username?.toLowerCase().includes(q) ||
+                      u.profileId?.toLowerCase().includes(q) ||
+                      u.email?.toLowerCase().includes(q) ||
+                      u.securityAudit?.deviceModel?.toLowerCase().includes(q) ||
+                      u.securityAudit?.location?.toLowerCase().includes(q)
+                    );
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="p-8 rounded-2xl bg-white border border-slate-200 text-center space-y-2">
+                        <Users className="w-8 h-8 text-slate-300 mx-auto" />
+                        <p className="text-xs font-semibold text-slate-600">Користувачів не знайдено за вашим запитом</p>
+                        <p className="text-[11px] text-slate-400">Спробуйте інший пошуковий запит або очистіть поле пошуку.</p>
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((u) => {
+                    const userMsgs = allChatMessages.filter(
+                      (m) => m.senderEmail?.toLowerCase() === u.email?.toLowerCase()
+                    );
+                    const isExpanded = selectedUserEmailForMessages === u.email;
+
+                    return (
+                      <div 
+                        key={u.uid || u.email}
+                        className="p-4 sm:p-5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3 hover:border-slate-300 transition-all"
+                      >
+                        {/* User Header */}
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={u.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80'}
+                              alt={u.nickname}
+                              className="w-11 h-11 rounded-full object-cover border border-slate-200 shadow-xs"
+                            />
+                            <div>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm font-bold text-slate-900">{u.nickname}</span>
+                                <span className="text-xs font-mono font-semibold text-blue-600">@{u.username || 'user'}</span>
+                                <span className="px-2 py-0.5 rounded-full bg-slate-100 border border-slate-200 font-mono text-[10px] font-bold text-slate-700">
+                                  {u.profileId || '#ID'}
+                                </span>
+                                {u.isAdmin && (
+                                  <span className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 text-[9.5px] font-black uppercase">
+                                    👑 ADMIN
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-slate-400 font-mono">{u.email}</div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedUserEmailForMessages(isExpanded ? null : u.email)}
+                              className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                                isExpanded
+                                  ? 'bg-blue-600 text-white border-blue-600 shadow-xs'
+                                  : 'bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700'
+                              }`}
+                            >
+                              <MessageSquare className="w-3.5 h-3.5" />
+                              <span>Повідомлення ({userMsgs.length})</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Device & Location Security Audit Info */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] bg-slate-50/80 p-3 rounded-xl border border-slate-100 font-mono">
+                          <div>
+                            <span className="text-slate-400">📱 Модель пристрою:</span>{' '}
+                            <span className="font-semibold text-slate-800">{u.securityAudit?.deviceModel || 'Не визначено'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">📍 Локація & IP:</span>{' '}
+                            <span className="font-semibold text-slate-800">{u.securityAudit?.location || 'Захищено'}</span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">🕒 Дата реєстрації:</span>{' '}
+                            <span className="text-slate-700">
+                              {u.createdAt ? new Date(u.createdAt).toLocaleString('uk-UA') : 'Нещодавно'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-slate-400">💬 Всього повідомлень:</span>{' '}
+                            <span className="font-bold text-indigo-600">{userMsgs.length} шт.</span>
+                          </div>
+                        </div>
+
+                        {/* Expandable Messages History for this user */}
+                        {isExpanded && (
+                          <div className="pt-2 border-t border-slate-100 space-y-2 animate-in fade-in duration-150">
+                            <div className="flex items-center justify-between text-xs font-bold text-slate-700">
+                              <span>Історія повідомлень користувача:</span>
+                              <span className="text-[10px] text-slate-400">{userMsgs.length} знайдено</span>
+                            </div>
+
+                            {userMsgs.length === 0 ? (
+                              <div className="p-3 rounded-xl bg-slate-50 text-[11px] text-slate-400 italic text-center">
+                                Цей користувач ще не надсилав повідомлень у чат.
+                              </div>
+                            ) : (
+                              <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                {userMsgs.map((m) => (
+                                  <div 
+                                    key={m.id}
+                                    className="p-2.5 rounded-xl bg-blue-50/60 border border-blue-100/80 text-xs text-slate-800 flex items-start justify-between gap-2"
+                                  >
+                                    <div className="space-y-0.5">
+                                      <p className="text-[12px] text-slate-800 leading-snug">{m.text}</p>
+                                      <span className="text-[9.5px] text-slate-400 font-mono">
+                                        {new Date(m.timestamp).toLocaleString('uk-UA')}
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        await deleteChatMessage(m.id);
+                                        flashFeedback('Повідомлення видалено');
+                                      }}
+                                      className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer shrink-0"
+                                      title="Видалити повідомлення"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
             </div>
           )}

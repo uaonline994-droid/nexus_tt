@@ -211,7 +211,7 @@ export default function App() {
   }, []);
 
   // Google Sign In via Firebase Auth
-  const handleGoogleSignInClick = async () => {
+  const handleGoogleSignInClick = async (openChatAfterAuth = false) => {
     setIsAuthLoading(true);
     soundService.playClickSound();
     try {
@@ -220,13 +220,38 @@ export default function App() {
       
       if (user && user.email) {
         const userIsAdmin = isMasterAdmin(user.email);
-        setCurrentUser({
-          id: user.uid,
-          name: user.displayName || user.email.split('@')[0],
-          email: user.email,
-          avatar: user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
-          isAdmin: userIsAdmin
-        });
+        const existingProfile = await fetchUserProfile(user.uid);
+
+        if (existingProfile) {
+          setCurrentUser({
+            id: user.uid,
+            name: existingProfile.nickname || user.displayName || user.email.split('@')[0],
+            email: user.email,
+            avatar: existingProfile.avatar || user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            isAdmin: userIsAdmin,
+            profileId: existingProfile.profileId,
+            username: existingProfile.username
+          });
+          if (openChatAfterAuth) {
+            setCurrentView('chat');
+          }
+        } else {
+          // If no profile exists yet, trigger Registration Modal
+          setPendingAuthUser({
+            uid: user.uid,
+            email: user.email,
+            displayName: user.displayName,
+            photoURL: user.photoURL
+          });
+          setCurrentUser({
+            id: user.uid,
+            name: user.displayName || user.email.split('@')[0],
+            email: user.email,
+            avatar: user.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80',
+            isAdmin: userIsAdmin
+          });
+          setIsRegistrationModalOpen(true);
+        }
 
         if (userIsAdmin) {
           showToast('👑 Ласкаво просимо, Головний Адміністратор (NEXUS)! Повний доступ активовано.', 'success');
@@ -573,9 +598,19 @@ export default function App() {
           <div className="w-full my-2">
             <button
               id="btn-general-chat-center"
-              onClick={() => {
+              onClick={async () => {
                 soundService.playClickSound();
-                if (currentUser && !currentUser.profileId && pendingAuthUser) {
+                if (!currentUser) {
+                  await handleGoogleSignInClick(true);
+                  return;
+                }
+                if (!currentUser.profileId || !currentUser.username) {
+                  setPendingAuthUser({
+                    uid: currentUser.id,
+                    email: currentUser.email,
+                    displayName: currentUser.name,
+                    photoURL: currentUser.avatar
+                  });
                   setIsRegistrationModalOpen(true);
                 } else {
                   setCurrentView('chat');
